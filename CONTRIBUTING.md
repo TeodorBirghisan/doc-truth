@@ -45,13 +45,15 @@ cd doc-truth
 uv sync
 ```
 
-Run these before opening a pull request:
+Run these before opening a pull request. CI runs the same checks on every
+pull request, and they must pass before it can be merged:
 
 ```sh
 uv run pytest
 uv run ruff check
 uv run ruff format --check
 uv run mypy
+uv build
 ```
 
 ## Code style
@@ -71,12 +73,14 @@ uv run mypy
   commit message on `main`**. Write it in
   [Conventional Commits](https://www.conventionalcommits.org/) form,
   `type(scope): summary`, using one of these types: `feat`, `fix`, `docs`,
-  `test`, `refactor`, `perf`, `build`, `ci`, `chore`. For example:
+  `test`, `refactor`, `perf`, `build`, `ci`, `chore`, `revert`. For example:
   `fix(collect): mark timed-out probes as failed`. Mark breaking changes with
-  `!`, as in `feat(config)!: rename the probes table`.
-- In the description, explain *why* the change is needed and link the issue
-  it resolves (`Closes #12`). The commits on your branch don't need to be
-  tidy; they're squashed on merge.
+  `!`, as in `feat(config)!: rename the probes table`. A CI check rejects
+  titles that don't follow this format.
+- **The description becomes the commit body**, so write it for someone
+  reading the history later: explain *why* the change is needed, and link the
+  issue it resolves (`Closes #12`). The commits on your branch don't need to
+  be tidy; they're squashed on merge.
 - The maintainer reviews every pull request. All review conversations must be
   resolved before it can be merged.
 
