@@ -1,5 +1,8 @@
 # doc-truth
 
+[![CI](https://github.com/TeodorBirghisan/doc-truth/actions/workflows/ci.yml/badge.svg)](https://github.com/TeodorBirghisan/doc-truth/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Check what your operations docs claim against what your systems actually run.
 
 > [!WARNING]
