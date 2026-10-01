@@ -20,6 +20,9 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 
+[project.scripts]
+doc-truth = "doc_truth.cli:main"
+
 [project.urls]
 Repository = "https://github.com/TeodorBirghisan/doc-truth"
 Issues = "https://github.com/TeodorBirghisan/doc-truth/issues"
