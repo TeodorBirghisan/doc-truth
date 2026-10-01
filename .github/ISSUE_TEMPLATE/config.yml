@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/TeodorBirghisan/doc-truth/discussions
+    about: Ask questions and talk through ideas before they become feature requests.
+  - name: Security vulnerability
+    url: https://github.com/TeodorBirghisan/doc-truth/security/advisories/new
+    about: Report security problems privately, never in a public issue.
