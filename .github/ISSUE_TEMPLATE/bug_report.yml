@@ -1,0 +1,76 @@
+name: Bug report
+description: doc-truth doesn't behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **Security problems don't belong here.** Report them privately as described in the [security policy](https://github.com/TeodorBirghisan/doc-truth/security/policy).
+
+        Configs, evidence and reports can contain hostnames, paths and secrets. Remove anything private before pasting.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did doc-truth do, and what did you expect it to do instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest config, doc excerpt and command that show the problem.
+      placeholder: |
+        1. A doc-truth.toml with ...
+        2. A doc containing ...
+        3. Run ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Error messages, or excerpts from the report or the evidence file. Formatted as code automatically.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: doc-truth version
+      description: The release version, or the commit SHA if you run it from source.
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.14.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04"
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Model backend
+      options:
+        - Not involved (collecting evidence only)
+        - Claude Code CLI
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this hasn't been reported yet.
+          required: true
+        - label: I removed secrets and private details from everything above.
+          required: true

@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest a new capability or an improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        doc-truth is pre-alpha and deliberately narrow in scope. A clear description of the problem helps more than a finished design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way? Concrete examples of docs and systems help most.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you imagine it working, if you have an idea.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other tools you tried.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Collecting evidence (probes)
+        - Checking docs (model and prompts)
+        - Reports and output
+        - Installation and packaging
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Design principles
+      description: doc-truth reports and never fixes, gives the model no tools, and has no runtime dependencies. See the [contributing guide](https://github.com/TeodorBirghisan/doc-truth/blob/main/CONTRIBUTING.md#design-principles).
+      options:
+        - label: This proposal fits those principles, or explains why one of them should change.
+          required: true

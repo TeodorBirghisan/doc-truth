@@ -154,15 +154,16 @@ planned for v0.2, along with redaction.
 - **v0.3:** a Claude Code plugin with an interactive command for running the
   check and working through its findings.
 
-## Development
+## Contributing
 
-```sh
-uv sync
-uv run pytest
-uv run ruff check
-uv run ruff format --check
-uv run mypy
-```
+Bug reports, ideas and pull requests are welcome. Read the
+[contributing guide](CONTRIBUTING.md) first; it covers the development setup,
+the design principles and how pull requests are merged. Questions go to
+[Discussions](https://github.com/TeodorBirghisan/doc-truth/discussions).
+Report security problems privately, as described in the
+[security policy](SECURITY.md).
+
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
