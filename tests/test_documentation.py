@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from doc_truth.collect import LOCALE, MAX_STDERR, MAX_STDOUT, REMOVED_VARIABLES, STOP_GRACE
 from doc_truth.config import DOC_KEYS, PROBE_KEYS, TOP_LEVEL_KEYS, load_config
+from doc_truth.evidence import format_size
+from doc_truth.runs import DEFAULT_OUTPUT_DIR_NAME, EVIDENCE_JSON, EVIDENCE_MARKDOWN, RUNS_DIR_NAME
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "docs" / "configuration.md"
@@ -31,3 +34,33 @@ def test_the_reference_documents_every_key() -> None:
     documented += [f"`{key}`" for key in (*DOC_KEYS, *PROBE_KEYS)]
 
     assert [form for form in documented if form not in reference] == []
+
+
+def flowed(document: Path) -> str:
+    return " ".join(document.read_text(encoding="utf-8").split())
+
+
+def test_the_reference_describes_how_probes_run() -> None:
+    reference = flowed(REFERENCE)
+    facts = [
+        "`bash -o pipefail`",
+        f"`LC_ALL={LOCALE}`",
+        *(f"`{name}` removed" for name in REMOVED_VARIABLES),
+        f"{STOP_GRACE:g} seconds later",
+        f"first {format_size(MAX_STDOUT)} of a probe's standard output",
+        f"first {format_size(MAX_STDERR)} of its standard error",
+    ]
+
+    assert [fact for fact in facts if fact not in reference] == []
+
+
+def test_the_readme_describes_the_run_folder() -> None:
+    readme = flowed(ROOT / "README.md")
+    facts = [
+        f"`{DEFAULT_OUTPUT_DIR_NAME}/{RUNS_DIR_NAME}/<UTC time>/`",
+        f"`{EVIDENCE_MARKDOWN}`",
+        f"`{EVIDENCE_JSON}`",
+        "`--output-dir PATH`",
+    ]
+
+    assert [fact for fact in facts if fact not in readme] == []

@@ -106,7 +106,8 @@ uv tool install git+https://github.com/TeodorBirghisan/doc-truth
 You need:
 
 - Python 3.14 or newer. uv downloads it if your system doesn't have it.
-- Linux. Probes are shell commands; the examples use systemd and cron.
+- Linux with bash. Probes run as bash commands; the examples use systemd
+  and cron.
 - For `check` in v0.1: [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
   installed and logged in. doc-truth calls the `claude` CLI with all tools
   disabled.
@@ -114,8 +115,8 @@ You need:
 ## Usage
 
 > [!NOTE]
-> `doc-truth validate` works today. `collect` and `check` are still being
-> built, so the parts about them describe the plan.
+> `doc-truth validate` and `doc-truth collect` work today. `check` is still
+> being built, so the parts about it describe the plan.
 
 A config file, `doc-truth.toml`, names the docs to check and the probes to run:
 
@@ -143,9 +144,24 @@ Paths are relative to the config file. The
 
 ```sh
 doc-truth validate   # check the config and list the docs and probes it resolves to
-doc-truth collect    # planned: run the probes and write the evidence; no model call
+doc-truth collect    # run the probes and write the evidence; no model call
 doc-truth check      # planned: compare the docs with the evidence and write the report
 ```
+
+`collect` runs the probes one at a time and writes what they print to a new
+folder, `.doc-truth/runs/<UTC time>/` next to the config file, whose path it
+prints:
+
+- `evidence.md` is the evidence as the model will see it. Read it before you
+  run `check`.
+- `evidence.json` has the same results with durations and other details, for
+  scripts.
+
+`--output-dir PATH` keeps runs somewhere else, such as a systemd
+`StateDirectory`. The default `.doc-truth` folder gets its own `.gitignore`,
+so evidence doesn't end up in your docs repository by accident. The
+[configuration reference](docs/configuration.md#how-probes-run) explains how
+probes run: the shell, the environment, timeouts and output limits.
 
 A finding in the report will look like this:
 
@@ -158,23 +174,25 @@ A finding in the report will look like this:
 ```
 
 `validate` exits with `0` when the config is valid and `2` when it isn't.
-`check` will exit with `0` when there is nothing new, `1` when there are new
+`collect` exits with `0` when every probe succeeded and `2` when any failed;
+it writes the evidence either way. `check` will exit with `0` when there is nothing new, `1` when there are new
 confirmed findings, and `2` when a probe or doc-truth itself failed. That
 makes it easy to run from cron or a systemd timer and alert on failure.
 
 ## Privacy
 
 The evidence and your docs go into the prompt. With a hosted model, they
-leave your machine. Run `doc-truth collect` first and read the evidence file:
-it is exactly what will be sent. Keep secrets out of probe output. Support for
+leave your machine. Run `doc-truth collect` first and read `evidence.md`: it
+is exactly the evidence that will be sent. Keep secrets out of probe output.
+Run folders are readable only by the user who ran doc-truth. Support for
 local models through OpenAI-compatible endpoints (Ollama, llama.cpp, vLLM) is
 planned for v0.2, along with redaction.
 
 ## Roadmap
 
-- **v0.1:** the config format and `validate` (done), `collect`, `check`, quote
-  verification, Markdown and JSON reports, exit codes, example probes for
-  systemd, cron and HTTP.
+- **v0.1:** the config format and `validate` (done), `collect` (done),
+  `check`, quote verification, Markdown and JSON reports, exit codes, example
+  probes for systemd, cron and HTTP.
 - **v0.2:** local models via OpenAI-compatible endpoints, a baseline file to
   acknowledge known findings, automatic checks for paths cited in the docs,
   redaction of secrets in evidence.
