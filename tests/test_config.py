@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from doc_truth.config import ConfigError, DocSource, Probe, load_config
+from doc_truth.config import ConfigError, DocSource, ModelSettings, Probe, load_config
 
 DOCS = """
 [[docs]]
@@ -39,6 +39,7 @@ def test_minimal_config_uses_the_documented_defaults(
             notes=None,
         ),
     )
+    assert config.model == ModelSettings(name="sonnet", timeout=600.0)
 
 
 def test_every_setting_is_read(write_config: Callable[[str], Path]) -> None:
@@ -70,6 +71,10 @@ def test_every_setting_is_read(write_config: Callable[[str], Path]) -> None:
             done
             """
             timeout = 3600
+
+            [model]
+            name = "opus"
+            timeout = 900
             '''
         )
     )
@@ -97,6 +102,7 @@ def test_every_setting_is_read(write_config: Callable[[str], Path]) -> None:
             notes=None,
         ),
     )
+    assert config.model == ModelSettings(name="opus", timeout=900.0)
 
 
 def test_relative_paths_belong_to_the_config_directory(
@@ -137,8 +143,8 @@ def test_a_byte_order_mark_is_accepted(tmp_path: Path) -> None:
             id="unknown top-level key",
         ),
         pytest.param(
-            DOCS + PROBES + '[model]\nname = "x"\n',
-            ('unknown key "model"',),
+            DOCS + PROBES + '[output]\ndir = "x"\n',
+            ('unknown key "output"',),
             id="unknown table",
         ),
         pytest.param(
@@ -285,6 +291,33 @@ def test_timeout_problems(write_config: Callable[[str], Path], value: str, probl
     text = DOCS + f'[[probes]]\nname = "uptime"\ncommand = "uptime"\ntimeout = {value}\n'
 
     assert problems_in(write_config, text) == (f'[[probes]] #1 "uptime": {problem}',)
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        (
+            '[[model]]\nname = "opus"',
+            "[[model]] must be written [model], with single brackets, only once",
+        ),
+        ('model = "opus"', "model must be a [model] table, found a string"),
+        ('[model]\nnmae = "opus"', '[model]: unknown key "nmae" (did you mean "name"?)'),
+        ("[model]\nname = 4", "[model]: name must be a string, found an integer"),
+        ('[model]\nname = ""', "[model]: name must not be empty"),
+        (
+            "[model]\ntimeout = 0",
+            "[model]: timeout must be more than 0 and at most 3600 seconds, found 0",
+        ),
+    ],
+)
+def test_model_problems(write_config: Callable[[str], Path], text: str, problem: str) -> None:
+    assert problems_in(write_config, text + "\n" + DOCS + PROBES) == (problem,)
+
+
+def test_an_empty_model_table_keeps_the_defaults(write_config: Callable[[str], Path]) -> None:
+    config = load_config(write_config(DOCS + PROBES + "[model]\n"))
+
+    assert config.model == ModelSettings()
 
 
 @pytest.mark.parametrize(

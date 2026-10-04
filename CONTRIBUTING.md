@@ -71,7 +71,8 @@ uv build
 How `check` has to treat docs and evidence is pinned down by the cases in
 [`evals/`](evals/README.md). If doc-truth reports something it shouldn't, or
 misses something it should find, the most useful contribution is a new case
-that shows it.
+that shows it. The live evaluation described there sends the cases to the real
+model.
 
 ## Pull requests
 

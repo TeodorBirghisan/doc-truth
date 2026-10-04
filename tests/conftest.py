@@ -3,6 +3,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from fakes import FakeClaude
+
+from doc_truth import collect as collect_module
 
 
 @pytest.fixture
@@ -24,3 +27,16 @@ def touch(tmp_path: Path) -> Callable[..., None]:
             path.write_text("# Doc\n", encoding="utf-8")
 
     return create
+
+
+@pytest.fixture
+def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeClaude:
+    directory = tmp_path / "fake-claude"
+    directory.mkdir()
+    return FakeClaude(directory, monkeypatch)
+
+
+@pytest.fixture
+def quick_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(collect_module, "STOP_GRACE", 0.2)
+    monkeypatch.setattr(collect_module, "DRAIN_TIME", 0.2)

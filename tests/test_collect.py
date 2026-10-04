@@ -3,12 +3,12 @@ import pwd
 import shutil
 import signal
 import socket
-import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+from processes import gone
 
 from doc_truth import collect as collect_module
 from doc_truth.collect import (
@@ -59,29 +59,6 @@ def run(tmp_path: Path) -> Callable[..., ProbeResult]:
         return run_probe(probe, shell=shell, cwd=tmp_path, environment=environment)
 
     return run_command
-
-
-@pytest.fixture
-def quick_stop(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(collect_module, "STOP_GRACE", 0.2)
-    monkeypatch.setattr(collect_module, "DRAIN_TIME", 0.2)
-
-
-def alive(pid: int) -> bool:
-    try:
-        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except FileNotFoundError:
-        return False
-    return state != "Z"
-
-
-def gone(pid: int, *, within: float = 3.0) -> bool:
-    give_up = time.monotonic() + within
-    while alive(pid):
-        if time.monotonic() > give_up:
-            return False
-        time.sleep(0.02)
-    return True
 
 
 def test_a_successful_probe_records_its_output(run: Callable[..., ProbeResult]) -> None:

@@ -1,7 +1,10 @@
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+
+_FENCED_BLOCK = re.compile(r"^```(?:json)?[ \t]*\n(.*?)\n```[ \t]*$", re.DOTALL | re.MULTILINE)
 
 
 class Kind(StrEnum):
@@ -55,6 +58,16 @@ class FindingsError(Exception):
             listed = "\n".join(f"  - {problem}" for problem in self.problems)
             message = f"invalid findings: {len(self.problems)} problems\n{listed}"
         super().__init__(message)
+
+
+def parse_answer(text: str) -> tuple[Finding, ...]:
+    blocks = _FENCED_BLOCK.findall(text)
+    body = blocks[0] if len(blocks) == 1 else text
+    try:
+        data = json.loads(body)
+    except ValueError as error:
+        raise FindingsError([f"the answer is not valid JSON: {error}"]) from None
+    return parse_findings(data)
 
 
 def parse_findings(data: object) -> tuple[Finding, ...]:

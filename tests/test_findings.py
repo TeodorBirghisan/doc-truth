@@ -1,4 +1,5 @@
 import copy
+import json
 
 import pytest
 
@@ -10,6 +11,7 @@ from doc_truth.findings import (
     Fix,
     Kind,
     ProbeQuote,
+    parse_answer,
     parse_findings,
 )
 
@@ -172,3 +174,50 @@ def test_a_quote_needs_a_line() -> None:
 def test_types_are_named_the_way_json_names_them() -> None:
     assert problems(answer(title=True)) == ("findings[0].title: must be a string, found a boolean",)
     assert problems({"findings": (1,)}) == ("findings must be an array, found tuple",)
+
+
+ONE_FINDING = json.dumps(answer(), indent=2)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        ONE_FINDING,
+        f"\n  {ONE_FINDING}\n\n",
+        f"```json\n{ONE_FINDING}\n```",
+        f"```\n{ONE_FINDING}\n```\n",
+        f"```json  \n{ONE_FINDING}\n```  ",
+        f"The backup time is wrong.\n\n```json\n{ONE_FINDING}\n```\n\nThe rest matches.",
+    ],
+    ids=["bare", "surrounded by space", "fenced", "plain fence", "trailing space", "prose"],
+)
+def test_an_answer_is_json_alone_or_in_one_fenced_block(text: str) -> None:
+    assert parse_answer(text) == parse_findings(answer())
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        ("", "the answer is not valid JSON: Expecting value: line 1 column 1 (char 0)"),
+        ("No findings.", "the answer is not valid JSON: Expecting value: line 1 column 1 (char 0)"),
+        (
+            f"```json\n{ONE_FINDING}\n```\n```json\n{ONE_FINDING}\n```",
+            "the answer is not valid JSON: Expecting value: line 1 column 1 (char 0)",
+        ),
+        (
+            f"See: ```json\n{ONE_FINDING}\n```",
+            "the answer is not valid JSON: Expecting value: line 1 column 1 (char 0)",
+        ),
+        (
+            '```text\n{"findings": []}\n```',
+            "the answer is not valid JSON: Expecting value: line 1 column 1 (char 0)",
+        ),
+        ('{"findings": 1}', "findings must be an array, found a number"),
+    ],
+    ids=["empty", "prose", "two blocks", "fence inside a line", "text fence", "invalid findings"],
+)
+def test_an_unusable_answer(text: str, problem: str) -> None:
+    with pytest.raises(FindingsError) as caught:
+        parse_answer(text)
+
+    assert caught.value.problems == (problem,)
