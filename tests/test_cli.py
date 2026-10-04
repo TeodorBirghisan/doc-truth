@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -159,3 +160,147 @@ def test_the_package_runs_as_a_module() -> None:
         f"doc-truth {version('doc-truth')}\n",
         "",
     )
+
+
+COLLECT_CONFIG = """
+[[docs]]
+path = "docs/*.md"
+
+[[probes]]
+name = "greeting"
+command = "echo hello"
+
+[[probes]]
+name = "inactive-unit"
+command = "echo inactive; exit 3"
+success-exit-codes = [0, 3]
+"""
+
+
+def test_collect_writes_a_run_and_prints_its_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+) -> None:
+    write_config(COLLECT_CONFIG)
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["collect"]) == 0
+
+    out, err = capsys.readouterr()
+    run = Path(out.removesuffix("\n"))
+    assert run.parent == tmp_path / ".doc-truth" / "runs"
+    assert "## greeting" in (run / "evidence.md").read_text(encoding="utf-8")
+    assert (run / "evidence.json").is_file()
+    assert re.fullmatch(
+        r"\[1/2\] greeting       ok      \d+\.\d\ds\n"
+        r"\[2/2\] inactive-unit  ok      \d+\.\d\ds\n"
+        r"Probes: 2 ok, 0 failed\.\n",
+        err,
+    )
+
+
+def test_collect_exits_2_when_a_probe_fails_and_still_writes_the_evidence(
+    capsys: pytest.CaptureFixture[str], write_config: Callable[[str], Path]
+) -> None:
+    config = write_config(COLLECT_CONFIG.replace("[0, 3]", "[0]"))
+
+    assert main(["collect", "--config", str(config)]) == 2
+
+    out, err = capsys.readouterr()
+    assert "PROBE FAILED" in (Path(out.strip()) / "evidence.md").read_text(encoding="utf-8")
+    assert re.search(
+        r"^\[2/2\] inactive-unit  failed  \d+\.\d\ds  "
+        r"exit code 3 is not in success-exit-codes \[0\]$",
+        err,
+        flags=re.MULTILINE,
+    )
+    assert err.endswith("Probes: 1 ok, 1 failed.\n")
+
+
+def test_collect_pads_the_counter_for_ten_or_more_probes(
+    capsys: pytest.CaptureFixture[str], write_config: Callable[[str], Path]
+) -> None:
+    probes = "".join(f'[[probes]]\nname = "p{n}"\ncommand = "true"\n' for n in range(1, 11))
+    config = write_config(f'[[docs]]\npath = "a.md"\n{probes}')
+
+    assert main(["collect", "-c", str(config)]) == 0
+
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0].startswith("[ 1/10] p1   ok")
+    assert lines[9].startswith("[10/10] p10  ok")
+
+
+def test_collect_does_not_need_the_docs_to_exist(
+    capsys: pytest.CaptureFixture[str], write_config: Callable[[str], Path]
+) -> None:
+    config = write_config(COLLECT_CONFIG)
+
+    assert main(["collect", "-c", str(config)]) == 0
+
+
+def test_collect_writes_to_the_output_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], write_config: Callable[[str], Path]
+) -> None:
+    config = write_config(COLLECT_CONFIG)
+
+    assert main(["collect", "-c", str(config), "--output-dir", str(tmp_path / "state")]) == 0
+
+    assert Path(capsys.readouterr().out.strip()).parent == tmp_path / "state" / "runs"
+    assert not (tmp_path / ".doc-truth").exists()
+
+
+def test_collect_checks_the_output_dir_before_running_any_probe(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], write_config: Callable[[str], Path]
+) -> None:
+    (tmp_path / "state").write_text("not a directory\n", encoding="utf-8")
+    config = write_config(
+        '[[docs]]\npath = "a.md"\n[[probes]]\nname = "x"\ncommand = "touch ran"\n'
+    )
+
+    assert main(["collect", "-c", str(config), "-o", str(tmp_path / "state")]) == 2
+
+    assert capsys.readouterr() == (
+        "",
+        f"doc-truth: error: cannot write the evidence to {tmp_path / 'state'}: Not a directory\n",
+    )
+    assert not (tmp_path / "ran").exists()
+
+
+def test_collect_exits_2_without_bash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+) -> None:
+    config = write_config(COLLECT_CONFIG)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert main(["collect", "-c", str(config)]) == 2
+
+    assert capsys.readouterr().err.startswith("doc-truth: error: bash was not found on PATH;")
+
+
+def test_collect_exits_2_on_config_problems(
+    capsys: pytest.CaptureFixture[str], write_config: Callable[[str], Path]
+) -> None:
+    config = write_config('[[docs]]\npath = "README.md"\n')
+
+    assert main(["collect", "-c", str(config)]) == 2
+    assert "no [[probes]] entries" in capsys.readouterr().err
+
+
+def test_an_interrupted_run_exits_130(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+) -> None:
+    def interrupt(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "collect", interrupt)
+    config = write_config(COLLECT_CONFIG)
+
+    assert main(["collect", "-c", str(config)]) == 130
+    assert capsys.readouterr() == ("", "doc-truth: interrupted\n")

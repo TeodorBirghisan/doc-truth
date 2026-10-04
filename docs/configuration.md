@@ -4,9 +4,10 @@ doc-truth reads its settings from a TOML file, `doc-truth.toml` in the
 current directory unless you pass `--config PATH`.
 
 > [!NOTE]
-> `doc-truth validate` reads and checks this format today. `collect` and
-> `check`, the commands that act on it, are still being built. Where a
-> setting only matters to them, this page says what they will do with it.
+> `doc-truth validate` checks this format and `doc-truth collect` runs the
+> probes. `check`, which compares the docs with the evidence, is still being
+> built. Where a setting only matters to it, this page says what it will do
+> with it.
 
 ## Example
 
@@ -114,8 +115,9 @@ with a letter or digit. Every probe needs its own name.
 
 ### `command`
 
-`collect` will run the command on the host and record its output, its exit
-code and anything it writes to standard error.
+`collect` runs the command on the host and records its output, its exit
+code and anything it writes to standard error. [How probes run](#how-probes-run)
+describes the shell and the environment it runs in.
 
 > [!WARNING]
 > The command runs with the permissions of the user who runs doc-truth, with
@@ -139,3 +141,38 @@ answer rather than a failure.
 
 Tell the model what the output can't show, so it doesn't read an absence as
 proof: *"Lists system timers only; user timers need their own probe."*
+
+## How probes run
+
+`doc-truth collect` runs the probes one at a time, in the order they appear
+in the file. Each one runs:
+
+- **With `bash -o pipefail`.** bash must be on `PATH`. With `pipefail`, a
+  pipeline fails when any command in it fails, so in
+  `systemctl list-timers | grep backup` a broken `systemctl` can't hide
+  behind a working `grep`. The catch: a command that stops reading early,
+  such as `head`, can make the command feeding it fail with exit code 141.
+  Use `sed -n 1p` rather than `head -n 1`; it reads all of its input.
+- **In the directory that contains the config file,** so relative paths in
+  commands mean the same as relative paths in the config.
+- **With your environment and three changes:**
+  - `LC_ALL=C.UTF-8`, so messages are in English whatever the host's
+    language, and UTF-8 text stays intact;
+  - `LANGUAGE` removed, so translated messages can't come back through it;
+  - `BASH_ENV` removed, so no startup file runs commands that aren't in the
+    config.
+
+  `TZ` is left alone, because docs give times in the host's local time. The
+  evidence records the time zone.
+- **With nothing on standard input,** so a command that waits for input gets
+  end-of-file instead of hanging until its timeout.
+
+A probe that runs longer than its `timeout` is stopped with `SIGTERM`, along
+with every process it started, and whatever is still running 2 seconds later
+gets `SIGKILL`. Processes a probe leaves running in the background are
+stopped the same way when it finishes.
+
+doc-truth keeps the first 1 MiB of a probe's standard output and the first
+64 KiB of its standard error. A probe that prints more than 1 MiB is stopped
+and fails, because a listing that was cut off can't show what's missing.
+Standard error that was cut off is marked as such but doesn't fail the probe.
