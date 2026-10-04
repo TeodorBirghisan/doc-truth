@@ -1,0 +1,26 @@
+[[docs]]
+path = "docs/*.md"
+
+[[probes]]
+name = "custom-timers"
+command = '''
+for unit in /etc/systemd/system/*.timer; do
+  name=$(basename "$unit")
+  printf '%-27s %s\n' "$name" "$(systemctl show -p TimersCalendar --value "$name")"
+done
+'''
+notes = "Timers defined in /etc/systemd/system and their calendar specs, in local time."
+
+[[probes]]
+name = "cron-d"
+command = '''for f in /etc/cron.d/*; do echo "== $f"; grep -v '^#' "$f" | sed '/^$/d'; done'''
+notes = "Every file in /etc/cron.d, without comments and blank lines."
+
+[[probes]]
+name = "restic-version"
+command = "restic version"
+
+[[probes]]
+name = "cloud-status"
+command = '''curl -s -o /dev/null -w '%{http_code} %{content_type}\n' https://cloud.example.org/status.php'''
+notes = "The HTTP status and content type only, not the body."

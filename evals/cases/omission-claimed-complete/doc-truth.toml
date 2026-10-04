@@ -1,0 +1,18 @@
+[[docs]]
+path = "docs/operations.md"
+notes = "Section 3 lists every timer in /etc/systemd/system and every job in /etc/cron.d."
+
+[[probes]]
+name = "custom-timers"
+command = '''
+for unit in /etc/systemd/system/*.timer; do
+  name=$(basename "$unit")
+  printf '%-27s %s\n' "$name" "$(systemctl show -p TimersCalendar --value "$name")"
+done
+'''
+notes = "Timers defined in /etc/systemd/system and their calendar specs, in local time."
+
+[[probes]]
+name = "cron-d"
+command = '''for f in /etc/cron.d/*; do echo "== $f"; grep -v '^#' "$f" | sed '/^$/d'; done'''
+notes = "Every file in /etc/cron.d, without comments and blank lines."

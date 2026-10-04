@@ -1,0 +1,5 @@
+[[must-find]]
+id = "apt-scope"
+doc = ["docs/operations.md:20", "notes/apt.md:6-7", "notes/changelog.md:4-5"]
+evidence = ["docs/operations.md:20", "notes/apt.md:6-7", "notes/changelog.md:4-5"]
+note = "The manual says only security updates are automatic; two notes record that regular updates have been automatic since 2026-08-24. No probe shows what unattended-upgrades installs."

@@ -1,0 +1,17 @@
+[[must-find]]
+id = "excludes-missing"
+doc = ["docs/devops.md:8"]
+evidence = ["probe:cited-paths"]
+note = "Nothing explains why /etc/restic/excludes.txt is missing."
+
+[[must-not-find]]
+id = "workstation-paths-confirmed"
+doc = ["docs/devops.md:3", "docs/devops.md:5-6"]
+confidence = "confirmed"
+note = "The config's notes say these paths are on the workstation."
+
+[[allowed]]
+id = "workstation-paths-suspect"
+doc = ["docs/devops.md:3", "docs/devops.md:5-6"]
+confidence = "suspect"
+note = "A SUSPECT that says the paths may be on another machine is acceptable."

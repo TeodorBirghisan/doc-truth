@@ -66,6 +66,13 @@ uv build
 - Prefer clear names to comments. Write a comment only to explain *why*
   something is done a non-obvious way, never to restate what the code does.
 
+## Model behaviour
+
+How `check` has to treat docs and evidence is pinned down by the cases in
+[`evals/`](evals/README.md). If doc-truth reports something it shouldn't, or
+misses something it should find, the most useful contribution is a new case
+that shows it.
+
 ## Pull requests
 
 - Branch from `main` and keep each pull request to one topic.

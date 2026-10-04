@@ -1,0 +1,5 @@
+[[must-find]]
+id = "boot-snapshot-missing"
+doc = ["docs/operations.md:13-20"]
+evidence = ["probe:cron-d"]
+note = "The config's notes say section 3 lists every job in /etc/cron.d, but /etc/cron.d/timeshift-boot has no row."

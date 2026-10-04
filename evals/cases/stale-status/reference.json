@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "kind": "stale-status",
+      "title": "The offsite copy is described as planned, but it already runs",
+      "doc": {
+        "file": "docs/backups.md",
+        "line": 10,
+        "quote": "Not set up yet."
+      },
+      "evidence": {
+        "probe": "offsite-last-run",
+        "quote": "Result=success"
+      },
+      "confidence": "confirmed",
+      "fix": "doc",
+      "reason": "restic-offsite.timer is scheduled for Sundays at 06:00 and the service last ran successfully on 2026-09-27, so the offsite copy is no longer planned."
+    }
+  ]
+}

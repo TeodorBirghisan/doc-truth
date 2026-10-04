@@ -1,0 +1,9 @@
+[[results]]
+probe = "cited-paths"
+exit-code = 0
+stdout = '''
+MISSING /home/ops/projects/homelab-iac
+MISSING /home/ops/.config/sops/age/keys.txt
+OK      /etc/restic/env
+MISSING /etc/restic/excludes.txt
+'''

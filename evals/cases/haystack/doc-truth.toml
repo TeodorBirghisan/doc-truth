@@ -1,0 +1,101 @@
+[[docs]]
+path = "docs/operations.md"
+notes = """
+Section 4 lists every timer in /etc/systemd/system and every job in /etc/cron.d,
+except e2scrub_all, as the section explains.
+"""
+
+[[docs]]
+path = "docs/services/*.md"
+
+[[docs]]
+path = "docs/runbooks/*.md"
+
+[[docs]]
+path = "docs/decisions.md"
+
+[[docs]]
+path = "docs/changelog.md"
+
+[[docs]]
+path = "docs/network.md"
+
+[[docs]]
+path = "docs/incidents.md"
+
+[[probes]]
+name = "custom-timers"
+command = '''
+for unit in /etc/systemd/system/*.timer; do
+  name=$(basename "$unit")
+  printf '%-27s %s\n' "$name" "$(systemctl show -p TimersCalendar --value "$name")"
+done
+'''
+notes = "Timers defined in /etc/systemd/system and their calendar specs, in local time."
+
+[[probes]]
+name = "onfailure"
+command = '''
+for unit in /etc/systemd/system/*.timer; do
+  service=$(basename "$unit" .timer).service
+  printf '%-30s %s\n' "$service" "$(systemctl show -p OnFailure "$service")"
+done
+'''
+notes = "The OnFailure= setting of the service behind each timer. Nothing after the = means nothing runs when it fails."
+
+[[probes]]
+name = "cron-d"
+command = '''for f in /etc/cron.d/*; do echo "== $f"; grep -v '^#' "$f" | sed '/^$/d'; done'''
+notes = "Every file in /etc/cron.d, without comments and blank lines."
+
+[[probes]]
+name = "containers"
+command = '''docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' '''
+
+[[probes]]
+name = "listening"
+command = "ss -tln"
+notes = "Listening TCP sockets. 127.0.0.53 and 127.0.0.54 are systemd-resolved."
+
+[[probes]]
+name = "running-services"
+command = "systemctl list-units --type=service --state=running --no-legend --plain | awk '{print $1}'"
+
+[[probes]]
+name = "disks"
+command = "df -h --output=target,fstype,size,used,avail,pcent / /srv /mnt/backup"
+notes = "df shows sizes in TiB: a 4 TB disk shows as 3.6T."
+
+[[probes]]
+name = "public-endpoints"
+command = '''
+for url in https://cloud.example.org/status.php https://photos.example.org/api/server/ping https://vault.example.org/alive; do
+  curl -s -o /dev/null -w '%{http_code} %{content_type} %{url_effective}\n' "$url"
+done
+'''
+notes = "curl -s fails on an invalid certificate, so a 200 here also means TLS is valid."
+
+[[probes]]
+name = "tool-versions"
+command = "restic version; docker --version; tailscale version | sed -n 1p"
+
+[[probes]]
+name = "backup-last-success"
+command = "cat /var/lib/restic-backup/last-success"
+
+[[probes]]
+name = "fstab"
+command = '''grep -v '^#' /etc/fstab | sed '/^$/d' '''
+
+[[probes]]
+name = "block-devices"
+command = "lsblk -o NAME,SIZE,MODEL,FSTYPE,LABEL,MOUNTPOINTS"
+
+[[probes]]
+name = "firewall"
+command = "sudo -n ufw status verbose"
+notes = "Runs through a sudoers rule that allows only this command."
+
+[[probes]]
+name = "backup-log"
+command = "journalctl -u restic-backup.service --since -3d --no-pager -o short-iso"
