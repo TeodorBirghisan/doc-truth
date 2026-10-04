@@ -1,0 +1,21 @@
+{
+  "findings": [
+    {
+      "kind": "cross-doc-contradiction",
+      "title": "The manual says only security updates are automatic; the apt notes say regular updates are too",
+      "doc": {
+        "file": "docs/operations.md",
+        "line": 20,
+        "quote": "other updates are installed by hand"
+      },
+      "evidence": {
+        "file": "notes/apt.md",
+        "line": 6,
+        "quote": "Since 2026-08-24 it also installs from `noble-updates`"
+      },
+      "confidence": "confirmed",
+      "fix": "doc",
+      "reason": "The operations manual limits unattended-upgrades to security updates, while notes/apt.md and the changelog record that noble-updates was added on 2026-08-24."
+    }
+  ]
+}

@@ -1,0 +1,217 @@
+[[results]]
+probe = "custom-timers"
+exit-code = 0
+stdout = '''
+db-dump.timer               { OnCalendar=*-*-* 02:30:00 ; next_elapse=Sun 2026-10-04 02:30:00 CEST }
+docker-image-prune.timer    { OnCalendar=Sun *-*-* 03:30:00 ; next_elapse=Sun 2026-10-04 03:30:00 CEST }
+immich-db-dump.timer        { OnCalendar=*-*-* 02:40:00 ; next_elapse=Sun 2026-10-04 02:40:00 CEST }
+maintenance-reboot.timer    { OnCalendar=Sun *-*-* 04:30:00 ; next_elapse=Sun 2026-10-04 04:30:00 CEST }
+nextcloud-cron.timer        { OnCalendar=*:0/15 ; next_elapse=Sat 2026-10-03 10:30:00 CEST }
+photo-import.timer          { OnCalendar=*-*-* 07:00:00 ; next_elapse=Sun 2026-10-04 07:00:00 CEST }
+restic-backup.timer         { OnCalendar=*-*-* 03:00:00 ; next_elapse=Sun 2026-10-04 03:00:00 CEST }
+restic-check.timer          { OnCalendar=Sun *-*-* 05:00:00 ; next_elapse=Sun 2026-10-04 05:00:00 CEST }
+restic-offsite.timer        { OnCalendar=Sun *-*-* 06:00:00 ; next_elapse=Sun 2026-10-04 06:00:00 CEST }
+restic-prune.timer          { OnCalendar=Sat *-*-* 05:00:00 ; next_elapse=Sat 2026-10-10 05:00:00 CEST }
+smart-report.timer          { OnCalendar=Mon *-*-* 08:00:00 ; next_elapse=Mon 2026-10-05 08:00:00 CEST }
+'''
+
+[[results]]
+probe = "onfailure"
+exit-code = 0
+stdout = '''
+db-dump.service                OnFailure=notify-failure@%n.service
+docker-image-prune.service     OnFailure=
+immich-db-dump.service         OnFailure=notify-failure@%n.service
+maintenance-reboot.service     OnFailure=
+nextcloud-cron.service         OnFailure=notify-failure@%n.service
+photo-import.service           OnFailure=notify-failure@%n.service
+restic-backup.service          OnFailure=notify-failure@%n.service
+restic-check.service           OnFailure=notify-failure@%n.service
+restic-offsite.service         OnFailure=notify-failure@%n.service
+restic-prune.service           OnFailure=notify-failure@%n.service
+smart-report.service           OnFailure=notify-failure@%n.service
+'''
+
+[[results]]
+probe = "cron-d"
+exit-code = 0
+stdout = '''
+== /etc/cron.d/e2scrub_all
+30 3 * * 0 root test -e /run/systemd/system || SERVICE_MODE=1 /usr/lib/x86_64-linux-gnu/e2fsprogs/e2scrub_all_cron
+10 3 * * * root test -e /run/systemd/system || SERVICE_MODE=1 /sbin/e2scrub_all -A -r
+== /etc/cron.d/timeshift-boot
+@reboot root sleep 10m && timeshift --create --scripted --tags B
+== /etc/cron.d/timeshift-hourly
+0 9-21 * * * root timeshift --check --scripted
+'''
+
+[[results]]
+probe = "containers"
+exit-code = 0
+stdout = '''
+NAMES             IMAGE                                             STATUS
+caddy             caddy:2.10.2                                      Up 6 days
+nextcloud         nextcloud:31.0.9-apache                           Up 6 days
+nextcloud-db      postgres:16.10                                    Up 6 days (healthy)
+nextcloud-redis   redis:7.4.6                                       Up 6 days
+immich-server     ghcr.io/immich-app/immich-server:v1.142.1         Up 6 days (healthy)
+immich-db         ghcr.io/immich-app/postgres:16-vectorchord0.4.3   Up 6 days (healthy)
+jellyfin          jellyfin/jellyfin:10.10.7                         Up 6 days (healthy)
+vaultwarden       vaultwarden/server:1.34.3                         Up 6 days (healthy)
+uptime-kuma       louislam/uptime-kuma:1.23.16                      Up 6 days (healthy)
+'''
+
+[[results]]
+probe = "listening"
+exit-code = 0
+stdout = '''
+State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process
+LISTEN 0      128            0.0.0.0:22          0.0.0.0:*
+LISTEN 0      4096           0.0.0.0:80          0.0.0.0:*
+LISTEN 0      4096          0.0.0.0:443          0.0.0.0:*
+LISTEN 0      4096       127.0.0.1:2283          0.0.0.0:*
+LISTEN 0      4096       127.0.0.1:3001          0.0.0.0:*
+LISTEN 0      4096       127.0.0.1:5432          0.0.0.0:*
+LISTEN 0      4096       127.0.0.1:6379          0.0.0.0:*
+LISTEN 0      4096       127.0.0.1:8080          0.0.0.0:*
+LISTEN 0      4096       127.0.0.1:8096          0.0.0.0:*
+LISTEN 0      4096       127.0.0.1:8222          0.0.0.0:*
+LISTEN 0      4096     127.0.0.53%lo:53          0.0.0.0:*
+LISTEN 0      4096        127.0.0.54:53          0.0.0.0:*
+LISTEN 0      128               [::]:22             [::]:*
+'''
+
+[[results]]
+probe = "running-services"
+exit-code = 0
+stdout = '''
+apcupsd.service
+containerd.service
+cron.service
+dbus.service
+docker.service
+getty@tty1.service
+multipathd.service
+polkit.service
+rsyslog.service
+smartmontools.service
+ssh.service
+systemd-journald.service
+systemd-logind.service
+systemd-networkd.service
+systemd-resolved.service
+systemd-timesyncd.service
+systemd-udevd.service
+tailscaled.service
+udisks2.service
+unattended-upgrades.service
+user@1000.service
+'''
+
+[[results]]
+probe = "disks"
+exit-code = 0
+stdout = '''
+Mounted on  Type  Size  Used Avail Use%
+/           ext4  228G   41G  176G  19%
+/srv        ext4  3.6T  1.9T  1.6T  55%
+/mnt/backup ext4  3.6T  2.2T  1.3T  63%
+'''
+
+[[results]]
+probe = "public-endpoints"
+exit-code = 0
+stdout = '''
+200 application/json; charset=utf-8 https://cloud.example.org/status.php
+200 application/json; charset=utf-8 https://photos.example.org/api/server/ping
+200 application/json https://vault.example.org/alive
+'''
+
+[[results]]
+probe = "tool-versions"
+exit-code = 0
+stdout = '''
+restic 0.18.1 compiled with go1.25.1 on linux/amd64
+Docker version 28.4.0, build d8eb465
+1.88.3
+'''
+
+[[results]]
+probe = "backup-last-success"
+exit-code = 0
+stdout = '''
+2026-10-03T03:12:44+02:00
+'''
+
+[[results]]
+probe = "fstab"
+exit-code = 0
+stdout = '''
+UUID=0b5c3e9e-7a51-4d0e-9a7c-2f6f0c1d8e42 / ext4 defaults 0 1
+UUID=6A1F-2C3B /boot/efi vfat umask=0077 0 1
+LABEL=srv /srv ext4 defaults,noatime 0 2
+LABEL=backup /mnt/backup ext4 defaults,noatime 0 2
+/swap.img none swap sw 0 0
+'''
+
+[[results]]
+probe = "block-devices"
+exit-code = 0
+stdout = '''
+NAME          SIZE MODEL                 FSTYPE LABEL  MOUNTPOINTS
+nvme0n1     232.9G Samsung SSD 980 250GB
+├─nvme0n1p1     1G                       vfat          /boot/efi
+└─nvme0n1p2 231.9G                       ext4          /
+sda           3.6T WDC WD40EFPX-68C6CN0
+└─sda1        3.6T                       ext4   srv    /srv
+sdb           3.6T ST4000VN006-3CW104
+└─sdb1        3.6T                       ext4   backup /mnt/backup
+'''
+
+[[results]]
+probe = "firewall"
+exit-code = 0
+stdout = '''
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), deny (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW IN    100.64.0.0/10
+80/tcp                     ALLOW IN    Anywhere
+443/tcp                    ALLOW IN    Anywhere
+80/tcp (v6)                ALLOW IN    Anywhere (v6)
+443/tcp (v6)               ALLOW IN    Anywhere (v6)
+'''
+
+[[results]]
+probe = "backup-log"
+exit-code = 0
+stdout = '''
+2026-10-01T03:00:01+02:00 homeserver systemd[1]: Starting restic-backup.service - restic backup of /srv...
+2026-10-01T03:00:02+02:00 homeserver restic[48211]: using parent snapshot 3c9a71d2
+2026-10-01T03:11:37+02:00 homeserver restic[48211]: Files:         212 new,  1048 changed, 284113 unmodified
+2026-10-01T03:11:37+02:00 homeserver restic[48211]: Added to the repository: 2.114 GiB (1.871 GiB stored)
+2026-10-01T03:11:37+02:00 homeserver restic[48211]: processed 285373 files, 1.873 TiB in 11:35
+2026-10-01T03:11:38+02:00 homeserver restic[48211]: snapshot 8e02b5f4 saved
+2026-10-01T03:11:38+02:00 homeserver systemd[1]: restic-backup.service: Deactivated successfully.
+2026-10-01T03:11:38+02:00 homeserver systemd[1]: Finished restic-backup.service - restic backup of /srv.
+2026-10-02T03:00:01+02:00 homeserver systemd[1]: Starting restic-backup.service - restic backup of /srv...
+2026-10-02T03:00:02+02:00 homeserver restic[51877]: using parent snapshot 8e02b5f4
+2026-10-02T03:12:05+02:00 homeserver restic[51877]: Files:         187 new,  966 changed, 284384 unmodified
+2026-10-02T03:12:05+02:00 homeserver restic[51877]: Added to the repository: 1.902 GiB (1.694 GiB stored)
+2026-10-02T03:12:05+02:00 homeserver restic[51877]: processed 285537 files, 1.875 TiB in 12:03
+2026-10-02T03:12:06+02:00 homeserver restic[51877]: snapshot a41d9c07 saved
+2026-10-02T03:12:06+02:00 homeserver systemd[1]: restic-backup.service: Deactivated successfully.
+2026-10-02T03:12:06+02:00 homeserver systemd[1]: Finished restic-backup.service - restic backup of /srv.
+2026-10-03T03:00:01+02:00 homeserver systemd[1]: Starting restic-backup.service - restic backup of /srv...
+2026-10-03T03:00:02+02:00 homeserver restic[55402]: using parent snapshot a41d9c07
+2026-10-03T03:12:43+02:00 homeserver restic[55402]: Files:         240 new,  1121 changed, 284412 unmodified
+2026-10-03T03:12:43+02:00 homeserver restic[55402]: Added to the repository: 2.388 GiB (2.106 GiB stored)
+2026-10-03T03:12:43+02:00 homeserver restic[55402]: processed 285773 files, 1.877 TiB in 12:41
+2026-10-03T03:12:44+02:00 homeserver restic[55402]: snapshot f7b3e218 saved
+2026-10-03T03:12:44+02:00 homeserver systemd[1]: restic-backup.service: Deactivated successfully.
+2026-10-03T03:12:44+02:00 homeserver systemd[1]: Finished restic-backup.service - restic backup of /srv.
+'''

@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "kind": "contradiction",
+      "title": "Nextcloud's background jobs run every 15 minutes, not every 5",
+      "doc": {
+        "file": "docs/operations.md",
+        "line": 74,
+        "quote": "every 5 minutes"
+      },
+      "evidence": {
+        "probe": "custom-timers",
+        "quote": "OnCalendar=*:0/15"
+      },
+      "confidence": "confirmed",
+      "fix": "doc",
+      "reason": "nextcloud-cron.timer is scheduled with OnCalendar=*:0/15, every 15 minutes, while section 4 and the Nextcloud page say every 5 minutes."
+    }
+  ]
+}

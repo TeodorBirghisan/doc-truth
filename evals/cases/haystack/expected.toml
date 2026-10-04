@@ -1,0 +1,6 @@
+[[must-find]]
+id = "nextcloud-cron-interval"
+doc = ["docs/operations.md:74", "docs/services/nextcloud.md:8"]
+evidence = ["probe:custom-timers"]
+confidence = "confirmed"
+note = "The docs say Nextcloud's background jobs run every 5 minutes; nextcloud-cron.timer runs every 15."

@@ -1,0 +1,16 @@
+[[must-find]]
+id = "backup-time"
+doc = ["docs/operations.md:17"]
+evidence = ["probe:custom-timers"]
+confidence = "confirmed"
+note = "The manual says the backup runs at 02:00; the timer runs at 03:00."
+
+[[must-not-find]]
+id = "failed-user-probes"
+evidence = ["probe:user-timers", "probe:user-onfailure"]
+note = "Both user-scope probes failed, so they are not evidence of anything."
+
+[[must-not-find]]
+id = "docs-sync-unverifiable"
+doc = ["docs/operations.md:20"]
+note = "The only probes that could check this row failed."

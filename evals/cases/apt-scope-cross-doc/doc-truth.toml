@@ -1,0 +1,20 @@
+[[docs]]
+path = "docs/operations.md"
+
+[[docs]]
+path = "notes/*.md"
+
+[[probes]]
+name = "custom-timers"
+command = '''
+for unit in /etc/systemd/system/*.timer; do
+  name=$(basename "$unit")
+  printf '%-27s %s\n' "$name" "$(systemctl show -p TimersCalendar --value "$name")"
+done
+'''
+notes = "Timers defined in /etc/systemd/system and their calendar specs, in local time."
+
+[[probes]]
+name = "apt-upgrade-timer"
+command = "systemctl show -p TimersCalendar --value apt-daily-upgrade.timer"
+notes = "The timer that starts unattended-upgrades. Shows when it runs, not what it installs."

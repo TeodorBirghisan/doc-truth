@@ -1,0 +1,5 @@
+[[must-find]]
+id = "offsite-running"
+doc = ["docs/backups.md:8-12"]
+evidence = ["probe:custom-timers", "probe:offsite-last-run"]
+note = "The doc calls the offsite copy planned and not set up, but its timer is scheduled and its last run succeeded."

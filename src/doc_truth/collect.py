@@ -214,7 +214,13 @@ def _result(
     exit_code = returncode if returncode is not None and returncode >= 0 else None
     signal_name = _signal_name(-returncode) if returncode is not None and returncode < 0 else None
     if failure is None:
-        failure = _failure(probe, stdout, exit_code, signal_name, timed_out=timed_out)
+        failure = probe_failure(
+            probe,
+            exit_code=exit_code,
+            signal_name=signal_name,
+            timed_out=timed_out,
+            stdout_truncated=stdout.truncated,
+        )
     return ProbeResult(
         probe=probe,
         stdout=stdout.text(),
@@ -229,17 +235,17 @@ def _result(
     )
 
 
-def _failure(
+def probe_failure(
     probe: Probe,
-    stdout: _Stream,
+    *,
     exit_code: int | None,
     signal_name: str | None,
-    *,
     timed_out: bool,
+    stdout_truncated: bool,
 ) -> str | None:
     if timed_out:
         return f"timed out after {probe.timeout:g}s"
-    if stdout.truncated:
+    if stdout_truncated:
         return f"printed more than {format_size(MAX_STDOUT)} on standard output"
     if signal_name is not None:
         return f"ended by {signal_name}"

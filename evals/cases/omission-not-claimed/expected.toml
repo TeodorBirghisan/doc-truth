@@ -1,0 +1,5 @@
+[[must-not-find]]
+id = "boot-snapshot-not-claimed"
+doc = ["docs/operations.md:13-20"]
+evidence = ["probe:cron-d"]
+note = "Nothing says section 3 is complete, so a job it doesn't list is not an omission."

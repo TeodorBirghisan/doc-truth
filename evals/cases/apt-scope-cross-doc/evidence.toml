@@ -1,0 +1,15 @@
+[[results]]
+probe = "custom-timers"
+exit-code = 0
+stdout = '''
+maintenance-reboot.timer    { OnCalendar=Sun *-*-* 04:30:00 ; next_elapse=Sun 2026-10-04 04:30:00 CEST }
+restic-backup.timer         { OnCalendar=*-*-* 03:00:00 ; next_elapse=Sun 2026-10-04 03:00:00 CEST }
+restic-check.timer          { OnCalendar=Sun *-*-* 05:00:00 ; next_elapse=Sun 2026-10-04 05:00:00 CEST }
+'''
+
+[[results]]
+probe = "apt-upgrade-timer"
+exit-code = 0
+stdout = '''
+{ OnCalendar=*-*-* 20:45:00 ; next_elapse=Sat 2026-10-03 20:45:00 CEST }
+'''

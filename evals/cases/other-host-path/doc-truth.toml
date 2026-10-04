@@ -1,0 +1,12 @@
+[[docs]]
+path = "docs/devops.md"
+notes = "~/projects and the SOPS age key are on the workstation, not on this server."
+
+[[probes]]
+name = "cited-paths"
+command = '''
+for path in ~/projects/homelab-iac ~/.config/sops/age/keys.txt /etc/restic/env /etc/restic/excludes.txt; do
+  if [ -e "$path" ]; then echo "OK      $path"; else echo "MISSING $path"; fi
+done
+'''
+notes = "Checks that the paths cited in the docs exist on this host."

@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "kind": "omission",
+      "title": "The Timeshift boot snapshot in /etc/cron.d has no row in section 3",
+      "doc": {
+        "file": "docs/operations.md",
+        "line": 13,
+        "quote": "## 3. What runs automatically"
+      },
+      "evidence": {
+        "probe": "cron-d",
+        "quote": "@reboot root sleep 10m && timeshift --create --scripted --tags B"
+      },
+      "confidence": "confirmed",
+      "fix": "doc",
+      "reason": "Section 3 is meant to list every job in /etc/cron.d, and /etc/cron.d/timeshift-boot is missing from it."
+    }
+  ]
+}

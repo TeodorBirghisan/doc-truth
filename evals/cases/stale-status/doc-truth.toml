@@ -1,0 +1,17 @@
+[[docs]]
+path = "docs/backups.md"
+
+[[probes]]
+name = "custom-timers"
+command = '''
+for unit in /etc/systemd/system/*.timer; do
+  name=$(basename "$unit")
+  printf '%-27s %s\n' "$name" "$(systemctl show -p TimersCalendar --value "$name")"
+done
+'''
+notes = "Timers defined in /etc/systemd/system and their calendar specs, in local time."
+
+[[probes]]
+name = "offsite-last-run"
+command = "systemctl show -p ExecMainStartTimestamp,Result restic-offsite.service"
+notes = "When the offsite copy last started, and how its last run ended."

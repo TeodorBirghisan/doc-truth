@@ -1,0 +1,6 @@
+[[must-find]]
+id = "timeshift-hourly-unrestricted"
+doc = ["docs/operations.md:20", "notes/maintenance-windows.md:6-8"]
+evidence = ["probe:cron-d"]
+confidence = "confirmed"
+note = "Both docs say the hourly check is restricted to 09-21; the installed cron file runs every hour."

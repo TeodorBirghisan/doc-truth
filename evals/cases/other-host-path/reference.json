@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "kind": "contradiction",
+      "title": "/etc/restic/excludes.txt does not exist",
+      "doc": {
+        "file": "docs/devops.md",
+        "line": 8,
+        "quote": "`/etc/restic/excludes.txt`"
+      },
+      "evidence": {
+        "probe": "cited-paths",
+        "quote": "MISSING /etc/restic/excludes.txt"
+      },
+      "confidence": "confirmed",
+      "fix": "doc",
+      "reason": "The notes say the backup's exclusions are in /etc/restic/excludes.txt, and the file is missing on this host."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "kind": "contradiction",
+      "title": "Timeshift's hourly check runs every hour, not only from 09:00 to 21:00",
+      "doc": {
+        "file": "docs/operations.md",
+        "line": 20,
+        "quote": "`0 9-21 * * *`; restricted on 2026-09-12 and verified on the host"
+      },
+      "evidence": {
+        "probe": "cron-d",
+        "quote": "0 * * * * root timeshift --check --scripted"
+      },
+      "confidence": "confirmed",
+      "fix": "host",
+      "reason": "The manual says /etc/cron.d/timeshift-hourly is 0 9-21 * * *, but the installed file has 0 * * * *, so the check also runs at night."
+    }
+  ]
+}
