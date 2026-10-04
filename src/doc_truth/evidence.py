@@ -110,36 +110,36 @@ def _probe_blocks(result: ProbeResult) -> list[str]:
     blocks = [f"## {probe.name}"]
     if result.failure is not None:
         blocks.append(f"**{FAILED_MARKER}:** {result.failure}.")
-    blocks.append(_fence(probe.command, "sh"))
+    blocks.append(fence(probe.command, "sh"))
     if probe.notes is not None:
-        blocks.append("Notes:\n\n" + _blockquote(probe.notes))
+        blocks.append("Notes:\n\n" + blockquote(probe.notes))
     if result.exit_code is not None:
         blocks.append(f"Exit code {result.exit_code}.")
     elif result.signal is not None:
         blocks.append(f"Ended by {result.signal}.")
     if result.stdout or result.stdout_truncated:
         blocks.append("Standard output:")
-        blocks.append(_fence(result.stdout, "text"))
+        blocks.append(fence(result.stdout, "text"))
         if result.stdout_truncated:
             blocks.append("Standard output was cut off here; the rest was dropped.")
     elif result.exit_code is not None or result.signal is not None:
         blocks.append("Standard output was empty.")
     if result.stderr or result.stderr_truncated:
         blocks.append("Standard error:")
-        blocks.append(_fence(result.stderr, "text"))
+        blocks.append(fence(result.stderr, "text"))
         if result.stderr_truncated:
             blocks.append("Standard error was cut off here; the rest was dropped.")
     return blocks
 
 
-def _fence(text: str, info: str) -> str:
+def fence(text: str, info: str) -> str:
     longest = max((len(run) for run in _BACKTICK_RUNS.findall(text)), default=0)
-    fence = "`" * max(3, longest + 1)
+    marker = "`" * max(3, longest + 1)
     body = text if text.endswith("\n") or not text else text + "\n"
-    return f"{fence}{info}\n{body}{fence}"
+    return f"{marker}{info}\n{body}{marker}"
 
 
-def _blockquote(text: str) -> str:
+def blockquote(text: str) -> str:
     return "\n".join(f"> {line}".rstrip() for line in text.splitlines())
 
 

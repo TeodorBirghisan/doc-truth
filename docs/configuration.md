@@ -142,6 +142,21 @@ answer rather than a failure.
 Tell the model what the output can't show, so it doesn't read an absence as
 proof: *"Lists system timers only; user timers need their own probe."*
 
+## `[model]`
+
+Settings for the model that `check` will ask to compare the docs with the
+evidence. The table is optional, and so is each key.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | `"sonnet"` | The model, in any form Claude Code's `--model` option accepts: an alias such as `sonnet` or `opus`, or a full model name. |
+| `timeout` | number | `600` | Seconds to wait for the model's answer, at most 3600. |
+
+In v0.1, the model runs through [Claude Code](https://docs.anthropic.com/en/docs/claude-code),
+which must be installed and logged in. `check` will start it with every tool,
+MCP server, hook and skill turned off, so the model can only read the prompt
+and answer it.
+
 ## How probes run
 
 `doc-truth collect` runs the probes one at a time, in the order they appear

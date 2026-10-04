@@ -122,7 +122,7 @@ def run_probe(
     try:
         timed_out = _read_until_done(process, stdout, stderr, deadline=started + probe.timeout)
     finally:
-        _stop_group(process)
+        stop_process_group(process)
     return _result(
         probe,
         stdout,
@@ -151,7 +151,7 @@ def _read_until_done(
                     # started in the background and would keep the pipes open.
                     if process.poll() is not None or now >= deadline:
                         timed_out = process.returncode is None
-                        _stop_group(process)
+                        stop_process_group(process)
                         stopped_at = now = time.monotonic()
                 elif now >= stopped_at + DRAIN_TIME:
                     break
@@ -166,7 +166,7 @@ def _read_until_done(
                     if stream is stdout and stdout.truncated:
                         selector.unregister(key.fd)
                         if stopped_at is None:
-                            _stop_group(process)
+                            stop_process_group(process)
                             stopped_at = time.monotonic()
         if stopped_at is None:
             try:
@@ -179,7 +179,7 @@ def _read_until_done(
     return timed_out
 
 
-def _stop_group(process: subprocess.Popen[bytes]) -> None:
+def stop_process_group(process: subprocess.Popen[bytes]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError, PermissionError:

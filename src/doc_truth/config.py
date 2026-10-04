@@ -14,10 +14,13 @@ DEFAULT_CONFIG_NAME = "doc-truth.toml"
 DEFAULT_TIMEOUT = 30.0
 MAX_TIMEOUT = 3600.0
 DEFAULT_SUCCESS_EXIT_CODES = frozenset({0})
+DEFAULT_MODEL = "sonnet"
+DEFAULT_MODEL_TIMEOUT = 600.0
 
-TOP_LEVEL_KEYS = ("docs", "probes")
+TOP_LEVEL_KEYS = ("docs", "probes", "model")
 DOC_KEYS = ("path", "notes")
 PROBE_KEYS = ("name", "command", "timeout", "success-exit-codes", "notes")
+MODEL_KEYS = ("name", "timeout")
 
 _PROBE_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _GLOB_CHARACTERS = frozenset("*?[")
@@ -63,11 +66,18 @@ class Probe:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ModelSettings:
+    name: str = DEFAULT_MODEL
+    timeout: float = DEFAULT_MODEL_TIMEOUT
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Config:
     path: Path
     base_dir: Path
     docs: tuple[DocSource, ...]
     probes: tuple[Probe, ...]
+    model: ModelSettings = ModelSettings()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -83,13 +93,16 @@ def load_config(path: Path) -> Config:
     _reject_unknown_keys(data, TOP_LEVEL_KEYS, None, problems)
     docs = _parse_docs(data.get("docs"), problems)
     probes = _parse_probes(data.get("probes"), problems)
+    model = _parse_model(data.get("model"), problems)
     if problems:
         raise ConfigError(path, problems)
+    assert model is not None
     return Config(
         path=path,
         base_dir=Path(os.path.abspath(path)).parent,
         docs=docs,
         probes=probes,
+        model=model,
     )
 
 
@@ -192,7 +205,7 @@ def _parse_probes(value: object, problems: list[str]) -> tuple[Probe, ...]:
             else:
                 numbers_by_name[name] = number
         command = _string(entry, "command", where, problems, required=True)
-        timeout = _timeout(entry, where, problems)
+        timeout = _timeout(entry, where, problems, default=DEFAULT_TIMEOUT)
         success_exit_codes = _success_exit_codes(entry, where, problems)
         notes = _notes(entry, where, problems)
         if (
@@ -213,6 +226,24 @@ def _parse_probes(value: object, problems: list[str]) -> tuple[Probe, ...]:
             )
         )
     return tuple(probes)
+
+
+def _parse_model(value: object, problems: list[str]) -> ModelSettings | None:
+    if value is None:
+        return ModelSettings()
+    if isinstance(value, list):
+        problems.append("[[model]] must be written [model], with single brackets, only once")
+        return None
+    if not isinstance(value, dict):
+        problems.append(f"model must be a [model] table, found {_describe(value)}")
+        return None
+    where = "[model]"
+    _reject_unknown_keys(value, MODEL_KEYS, where, problems)
+    name = _string(value, "name", where, problems, required=False)
+    timeout = _timeout(value, where, problems, default=DEFAULT_MODEL_TIMEOUT)
+    if timeout is None:
+        return None
+    return ModelSettings(name=name or DEFAULT_MODEL, timeout=timeout)
 
 
 def _entries(value: object, key: str, purpose: str, problems: list[str]) -> list[object]:
@@ -293,10 +324,12 @@ def _probe_name(table: Mapping[str, object], where: str, problems: list[str]) ->
     return None
 
 
-def _timeout(table: Mapping[str, object], where: str, problems: list[str]) -> float | None:
+def _timeout(
+    table: Mapping[str, object], where: str, problems: list[str], *, default: float
+) -> float | None:
     value = table.get("timeout")
     if value is None:
-        return DEFAULT_TIMEOUT
+        return default
     if isinstance(value, bool) or not isinstance(value, int | float):
         problems.append(f"{where}: timeout must be a number of seconds, found {_describe(value)}")
         return None

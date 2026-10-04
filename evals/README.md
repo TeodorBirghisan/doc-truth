@@ -5,10 +5,27 @@ written. Each one is a small set of docs, the evidence a host produced, and
 the findings a good answer must and must not contain. They come from real
 weekly runs of the script doc-truth grew out of, rewritten for a made-up host.
 
-> [!NOTE]
-> `check` is still being built. Today the test suite only checks that every
-> case is valid and that its reference answer scores perfectly. Running the
-> cases against a real model is planned for when `check` exists.
+## Running the cases
+
+The test suite checks that every case is valid and that its reference answer
+scores perfectly. It also sends each reference answer through the whole model
+call, with a stand-in for `claude` that replays it. None of that calls a
+model.
+
+The live evaluation sends the cases to the real model:
+
+```sh
+uv run python -m evals.live                          # every case, 3 runs each
+uv run python -m evals.live stale-status --runs 1 --model opus
+```
+
+It needs [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+installed and logged in, and it costs tokens: it makes one call per case and
+run, plus a second one when an answer can't be used. A case passes when each
+`must-find` is met in more than half of its runs, and no run has a false
+positive, a `must-not-find` match or an error. The command exits with 0 when
+every case passes and 1 when any fails. It saves the prompts and every answer
+in `evals/runs/`, which git ignores.
 
 ## The cases
 
