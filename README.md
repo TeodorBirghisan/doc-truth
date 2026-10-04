@@ -94,13 +94,38 @@ whether the likely fix is a doc edit or a change on the host.
 Not findings: wording, style or structure, anything that can't be tied to a
 line of evidence, and notes that record history ("was X until 2026-09-12").
 
-## Planned usage (v0.1)
+## Install
 
-A config file names the docs to check and the probes to run:
+doc-truth isn't on PyPI yet. To try what works so far, install it from
+GitHub with [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv tool install git+https://github.com/TeodorBirghisan/doc-truth
+```
+
+You need:
+
+- Python 3.14 or newer. uv downloads it if your system doesn't have it.
+- Linux. Probes are shell commands; the examples use systemd and cron.
+- For `check` in v0.1: [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+  installed and logged in. doc-truth calls the `claude` CLI with all tools
+  disabled.
+
+## Usage
+
+> [!NOTE]
+> `doc-truth validate` works today. `collect` and `check` are still being
+> built, so the parts about them describe the plan.
+
+A config file, `doc-truth.toml`, names the docs to check and the probes to run:
 
 ```toml
 [[docs]]
 path = "docs/operations.md"
+notes = "Section 3 lists every scheduled job on this host."
+
+[[docs]]
+path = "runbooks/**/*.md"
 
 [[probes]]
 name = "systemd-timers"
@@ -109,15 +134,20 @@ command = "systemctl list-timers --all --no-pager"
 [[probes]]
 name = "sitemap"
 command = "curl -s -o /dev/null -w '%{http_code} %{content_type}' https://example.com/sitemap.xml"
-caveats = "Reports the HTTP status and content type only, not the body."
+timeout = 15
+notes = "Reports the HTTP status and content type only, not the body."
 ```
+
+Paths are relative to the config file. The
+[configuration reference](docs/configuration.md) describes every setting.
 
 ```sh
-doc-truth collect    # run the probes and write the evidence; no model call
-doc-truth check      # compare the docs with the evidence and write the report
+doc-truth validate   # check the config and list the docs and probes it resolves to
+doc-truth collect    # planned: run the probes and write the evidence; no model call
+doc-truth check      # planned: compare the docs with the evidence and write the report
 ```
 
-A finding in the report looks like this:
+A finding in the report will look like this:
 
 ```markdown
 ## Backup timer runs at 03:00, not 02:00
@@ -127,8 +157,9 @@ A finding in the report looks like this:
 - Fix: doc edit
 ```
 
-`check` exits with `0` when there is nothing new, `1` when there are new
-confirmed findings, and `2` when a probe or doc-truth itself failed. This
+`validate` exits with `0` when the config is valid and `2` when it isn't.
+`check` will exit with `0` when there is nothing new, `1` when there are new
+confirmed findings, and `2` when a probe or doc-truth itself failed. That
 makes it easy to run from cron or a systemd timer and alert on failure.
 
 ## Privacy
@@ -139,18 +170,11 @@ it is exactly what will be sent. Keep secrets out of probe output. Support for
 local models through OpenAI-compatible endpoints (Ollama, llama.cpp, vLLM) is
 planned for v0.2, along with redaction.
 
-## Requirements
-
-- Python 3.14 or newer
-- Linux. Probes are shell commands; the examples use systemd and cron.
-- For `check` in v0.1: [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-  installed and logged in. doc-truth calls the `claude` CLI with all tools
-  disabled.
-
 ## Roadmap
 
-- **v0.1:** `collect`, `check`, quote verification, Markdown and JSON reports,
-  exit codes, example probes for systemd, cron and HTTP.
+- **v0.1:** the config format and `validate` (done), `collect`, `check`, quote
+  verification, Markdown and JSON reports, exit codes, example probes for
+  systemd, cron and HTTP.
 - **v0.2:** local models via OpenAI-compatible endpoints, a baseline file to
   acknowledge known findings, automatic checks for paths cited in the docs,
   redaction of secrets in evidence.
