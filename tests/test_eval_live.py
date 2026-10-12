@@ -7,7 +7,7 @@ from fake_claude import COST_USD, MODEL
 from fakes import ANSWER, INIT, NO_FINDINGS, FakeClaude
 
 from doc_truth.evidence import evidence_markdown
-from doc_truth.prompt import build_prompt
+from doc_truth.prompt import build_prompt, read_docs
 from evals import live
 from evals.cases import CASES_DIR, case_directories, load_case
 from evals.live import CaseResult, Run
@@ -29,7 +29,7 @@ def reference(name: str) -> str:
 
 def prompt_key(name: str) -> str:
     case = load_case(CASES_DIR / name)
-    prompt = build_prompt(case.docs, evidence_markdown(case.evidence))
+    prompt = build_prompt(read_docs(case.docs), evidence_markdown(case.evidence))
     return hashlib.sha256(prompt.user.encode()).hexdigest()
 
 
@@ -62,6 +62,7 @@ def make_run(number: int, score: CaseScore | None) -> Run:
         number=number,
         answers=(),
         findings=(),
+        dropped=(),
         score=score,
         error=None if score else "claude failed",
     )
@@ -118,7 +119,7 @@ def test_the_reference_answers_pass_through_the_real_model_call(
     summary = f"10 of 10 cases passed, 10 runs, 10 calls with --model sonnet (answered by {MODEL})"
     assert summary in out
     assert f"12030 input and 500 output tokens, ${10 * COST_USD:.4f}." in out
-    assert "timeshift-cron-contradiction  1/1        0      0       $0.0125  pass" in out
+    assert "timeshift-cron-contradiction  1/1        0      0        0       $0.0125  pass" in out
     (output,) = runs_dir.iterdir()
     assert f"Answers and prompts: {output}" in out
     assert sorted(path.name for path in output.iterdir()) == sorted(
@@ -134,6 +135,7 @@ def test_each_run_is_saved(fake_claude: FakeClaude, runs_dir: Path) -> None:
     (output,) = runs_dir.iterdir()
     saved = json.loads((output / "stale-status-1.json").read_text(encoding="utf-8"))
     assert saved["error"] is None
+    assert saved["dropped"] == []
     assert saved["score"] == {
         "passed": True,
         "found": ["offsite-running"],
@@ -169,15 +171,33 @@ def test_each_run_is_saved(fake_claude: FakeClaude, runs_dir: Path) -> None:
         ),
         (
             "failed-user-probe",
-            finding(evidence={"probe": "user-timers", "quote": "Failed to connect to bus"}),
-            "failed-user-probe #2: violates failed-user-probes: docs/operations.md:17 vs probe "
-            "user-timers [confirmed] The restic backup runs at 03:00, not 02:00",
+            finding(
+                doc={"file": "docs/operations.md", "line": 20, "quote": "every 15 minutes"},
+                evidence={"probe": "custom-timers", "quote": "restic-backup.timer"},
+            ),
+            "failed-user-probe #2: violates docs-sync-unverifiable: docs/operations.md:20 vs "
+            "probe custom-timers [confirmed] The restic backup runs at 03:00, not 02:00",
         ),
         (
             "clean",
-            finding(evidence={"file": "docs/services.md", "line": 3, "quote": "x"}),
-            "clean #1: false positive: docs/operations.md:17 vs docs/services.md:3 [confirmed] "
+            finding(
+                doc={"file": "docs/operations.md", "line": 17, "quote": "daily 03:00"},
+                evidence={
+                    "file": "docs/services.md",
+                    "line": 6,
+                    "end_line": 7,
+                    "quote": "restic is version 0.18.1",
+                },
+            ),
+            "clean #1: false positive: docs/operations.md:17 vs docs/services.md:6 [confirmed] "
             "The restic backup runs at 03:00, not 02:00",
+        ),
+        (
+            "failed-user-probe",
+            finding(evidence={"probe": "user-timers", "quote": "Failed to connect to bus"}),
+            "failed-user-probe #1: dropped: docs/operations.md:17 vs probe user-timers "
+            "[confirmed] The restic backup runs at 03:00, not 02:00: "
+            'evidence: probe "user-timers" failed, so it is no evidence',
         ),
         (
             "clean",
@@ -205,6 +225,40 @@ def test_a_failing_case_says_why(
     assert detail in out
 
 
+def test_a_dropped_finding_is_reported_but_is_not_wrong(
+    fake_claude: FakeClaude, runs_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    answer = finding(
+        doc={"file": "docs/operations.md", "line": 16, "end_line": 17, "quote": "daily 02:00"},
+        evidence={"file": "docs/services.md", "line": 3, "quote": "restic 0.17.0"},
+    )
+    fake_claude.play(*ANSWER, answers={"*": answer})
+
+    exit_code = live.main(["clean", "--runs", "2"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert f"clean  -          0      2        0       ${2 * COST_USD:.4f}  pass" in out
+    assert (
+        "clean #2: dropped: docs/operations.md:16-17 vs docs/services.md:3 [confirmed] "
+        "The restic backup runs at 03:00, not 02:00: "
+        "doc: the quote is not in docs/operations.md:16-17; "
+        "evidence: the quote is not in docs/services.md:3"
+    ) in out
+    (output,) = runs_dir.iterdir()
+    saved = json.loads((output / "clean-1.json").read_text(encoding="utf-8"))
+    assert saved["dropped"] == [
+        {
+            "finding": "docs/operations.md:16-17 vs docs/services.md:3 [confirmed] "
+            "The restic backup runs at 03:00, not 02:00",
+            "problems": [
+                "doc: the quote is not in docs/operations.md:16-17",
+                "evidence: the quote is not in docs/services.md:3",
+            ],
+        }
+    ]
+
+
 def test_a_model_that_fails_is_reported(
     fake_claude: FakeClaude, runs_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -215,7 +269,7 @@ def test_a_model_that_fails_is_reported(
 
     out = capsys.readouterr().out
     assert exit_code == 1
-    assert "clean  -          0      1       $0.0000  FAIL" in out
+    assert "clean  -          0      0        1       $0.0000  FAIL" in out
     assert "answered by no model" in out
     assert "clean #1: claude failed: Not logged in · Please run /login" in out
 

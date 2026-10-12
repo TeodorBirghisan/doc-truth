@@ -61,9 +61,11 @@ your docs (Markdown) ───────────────────�
    prompt. The model answers with structured findings. It gets no tools, so it
    cannot run commands, read other files or change anything.
 3. **Verify.** Before a finding reaches the report, doc-truth checks that the
-   quoted doc line exists at the cited location and that the quoted evidence
-   exists in the named probe's output. Findings whose quotes don't check out
-   are dropped or downgraded.
+   doc quote is in the lines it cites and that the evidence quote is in the
+   named probe's output. Runs of whitespace and curly quotes are ignored;
+   everything else must match exactly. A finding whose quotes don't check out,
+   or that rests on a failed probe, is dropped and listed separately with the
+   reason.
 
 ## Design principles
 

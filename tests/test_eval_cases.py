@@ -7,8 +7,10 @@ from pathlib import Path
 import pytest
 
 from doc_truth.evidence import evidence_markdown
-from doc_truth.findings import DocQuote, Kind, ProbeQuote
-from evals.cases import CASES_DIR, Case, CaseError, case_directories, load_case
+from doc_truth.findings import Kind
+from doc_truth.prompt import read_docs
+from doc_truth.verify import verify
+from evals.cases import CASES_DIR, CaseError, case_directories, load_case
 from evals.score import score
 
 CASE_NAMES = [path.name for path in case_directories()]
@@ -26,15 +28,6 @@ _ALLOWED_NETWORKS = [
 ]
 _IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
 _URL_HOST = re.compile(r"https?://([^/\s:`'\"]+)")
-
-
-def flowed(text: str) -> str:
-    return " ".join(text.split())
-
-
-def doc_lines(case: Case, file: str, start: int, end: int) -> str:
-    (doc,) = [doc for doc in case.docs if doc.display_path == file]
-    return flowed(" ".join(doc.path.read_text(encoding="utf-8").splitlines()[start - 1 : end]))
 
 
 def test_the_suite_has_the_agreed_cases() -> None:
@@ -79,20 +72,13 @@ def test_the_reference_answer_scores_perfectly(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", CASE_NAMES)
-def test_the_reference_quotes_are_where_they_say(name: str) -> None:
+def test_the_reference_quotes_verify_exactly_where_they_say(name: str) -> None:
     case = load_case(CASES_DIR / name)
-    outputs = {result.probe.name: result.stdout + result.stderr for result in case.evidence.results}
 
-    for finding in case.reference:
-        doc = finding.doc
-        assert flowed(doc.quote) in doc_lines(case, doc.file, doc.line, doc.end_line)
-        evidence = finding.evidence
-        if isinstance(evidence, ProbeQuote):
-            assert flowed(evidence.quote) in flowed(outputs[evidence.probe])
-        else:
-            assert isinstance(evidence, DocQuote)
-            lines = doc_lines(case, evidence.file, evidence.line, evidence.end_line)
-            assert flowed(evidence.quote) in lines
+    verification = verify(case.reference, read_docs(case.docs), case.evidence.results)
+
+    assert verification.dropped == ()
+    assert verification.findings == case.reference
 
 
 @pytest.mark.parametrize("name", CASE_NAMES)

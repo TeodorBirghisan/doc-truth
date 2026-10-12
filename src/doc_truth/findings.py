@@ -31,6 +31,11 @@ class DocQuote:
     end_line: int
     quote: str
 
+    @property
+    def location(self) -> str:
+        lines = str(self.line) if self.end_line == self.line else f"{self.line}-{self.end_line}"
+        return f"{self.file}:{lines}"
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ProbeQuote:
