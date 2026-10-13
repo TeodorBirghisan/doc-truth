@@ -1,15 +1,18 @@
 import errno
 import os
 import stat
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from doc_truth import runs as runs_module
 from doc_truth.config import Config, Probe
 from doc_truth.evidence import Evidence, ProbeResult, evidence_json, evidence_markdown
-from doc_truth.runs import RunsError, prepare_runs_dir, write_run
+from doc_truth.report import Report, report_json, report_markdown
+from doc_truth.runs import RunsError, prepare_runs_dir, write_report, write_run
 
 needs_permissions = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permissions")
 
@@ -45,6 +48,30 @@ def make_evidence(started_at: datetime = datetime(2026, 10, 4, 12, 4, 19, tzinfo
         config_path=Path("/etc/doc-truth.toml"),
         results=(result,),
     )
+
+
+def make_report(evidence: Evidence) -> Report:
+    return Report(
+        evidence=evidence,
+        docs=("docs/ops.md",),
+        prompt_version=1,
+        requested_model="sonnet",
+        answers=(),
+        findings=(),
+        dropped=(),
+        finished_at=evidence.finished_at,
+    )
+
+
+def write_text_failing_for(name: str, error: BaseException) -> Callable[..., int]:
+    write_text = Path.write_text
+
+    def failing(self: Path, data: str, *args: Any, **kwargs: Any) -> int:
+        if self.name == name:
+            raise error
+        return write_text(self, data, *args, **kwargs)
+
+    return failing
 
 
 def test_runs_go_next_to_the_config_by_default(tmp_path: Path) -> None:
@@ -202,3 +229,58 @@ def test_other_rename_errors_are_not_retried(
 
     assert attempts == [runs / "20261004T120419Z"]
     assert list(runs.iterdir()) == []
+
+
+def test_the_report_goes_next_to_the_evidence(tmp_path: Path) -> None:
+    evidence = make_evidence()
+    run = write_run(evidence, prepare_runs_dir(make_config(tmp_path), None))
+    report = make_report(evidence)
+
+    write_report(report, run)
+
+    assert sorted(path.name for path in run.iterdir()) == [
+        "evidence.json",
+        "evidence.md",
+        "report.json",
+        "report.md",
+    ]
+    assert (run / "report.json").read_text(encoding="utf-8") == report_json(report)
+    assert (run / "report.md").read_text(encoding="utf-8") == report_markdown(report)
+
+
+@pytest.mark.parametrize(
+    ("error", "raised"),
+    [
+        (OSError(errno.ENOSPC, os.strerror(errno.ENOSPC)), RunsError),
+        (KeyboardInterrupt(), KeyboardInterrupt),
+    ],
+)
+def test_a_failed_report_write_leaves_no_partial_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+    raised: type[BaseException],
+) -> None:
+    evidence = make_evidence()
+    run = write_run(evidence, prepare_runs_dir(make_config(tmp_path), None))
+    monkeypatch.setattr(Path, "write_text", write_text_failing_for(".report.md.incomplete", error))
+
+    with pytest.raises(raised) as caught:
+        write_report(make_report(evidence), run)
+
+    if raised is RunsError:
+        assert str(caught.value) == f"cannot write the report to {run}: No space left on device"
+    assert sorted(path.name for path in run.iterdir()) == ["evidence.json", "evidence.md"]
+
+
+@needs_permissions
+def test_an_unwritable_run_folder_is_an_error_for_the_report(tmp_path: Path) -> None:
+    evidence = make_evidence()
+    run = write_run(evidence, prepare_runs_dir(make_config(tmp_path), None))
+    run.chmod(0o500)
+
+    with pytest.raises(RunsError) as caught:
+        write_report(make_report(evidence), run)
+
+    assert str(caught.value) == f"cannot write the report to {run}: Permission denied"
+    assert sorted(path.name for path in run.iterdir()) == ["evidence.json", "evidence.md"]

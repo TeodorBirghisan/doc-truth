@@ -28,7 +28,7 @@ every case passes and 1 when any fails. It saves the prompts and every answer
 in `evals/runs/`, which git ignores.
 
 Answers are scored after quote verification (`src/doc_truth/verify.py`), the
-way `check` will report them. A dropped finding isn't counted as wrong, but a
+way `check` reports them. A dropped finding isn't counted as wrong, but a
 dropped `must-find` counts as missed. The `dropped` column counts them, and
 the reasons are listed under the table.
 
@@ -86,7 +86,7 @@ entry is a false positive, and a case passes only with no false positives.
 
 ### `reference.json`
 
-A complete answer in the findings format `check` will ask the model for
+A complete answer in the findings format `check` asks the model for
 (`src/doc_truth/findings.py`). It shows that `expected.toml` can be met.
 Quote verification keeps every finding in it unchanged, so each quote cites
 exactly the lines it covers.

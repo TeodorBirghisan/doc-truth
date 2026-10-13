@@ -56,7 +56,7 @@ your docs (Markdown) ───────────────────�
    read-only shell commands such as `systemctl list-timers` or
    `curl -sI https://example.com/`. It records each probe's output, exit code
    and errors in an evidence file. No model is involved, and the evidence file
-   is exactly what will be sent to one.
+   is in exactly the form a model sees.
 2. **Check.** It puts the evidence and your docs, with line numbers, into one
    prompt. The model answers with structured findings. It gets no tools, so it
    cannot run commands, read other files or change anything.
@@ -66,6 +66,8 @@ your docs (Markdown) ───────────────────�
    everything else must match exactly. A finding whose quotes don't check out,
    or that rests on a failed probe, is dropped and listed separately with the
    reason.
+4. **Report.** It writes the findings that survive, confirmed ones first, to
+   a Markdown report for people and a JSON report for scripts.
 
 ## Design principles
 
@@ -116,10 +118,6 @@ You need:
 
 ## Usage
 
-> [!NOTE]
-> `doc-truth validate` and `doc-truth collect` work today. `check` is still
-> being built, so the parts about it describe the plan.
-
 A config file, `doc-truth.toml`, names the docs to check and the probes to run:
 
 ```toml
@@ -147,7 +145,7 @@ Paths are relative to the config file. The
 ```sh
 doc-truth validate   # check the config and list the docs and probes it resolves to
 doc-truth collect    # run the probes and write the evidence; no model call
-doc-truth check      # planned: compare the docs with the evidence and write the report
+doc-truth check      # run the probes, compare the docs with the evidence, write the report
 ```
 
 `collect` runs the probes one at a time and writes what they print to a new
@@ -159,33 +157,64 @@ prints:
 - `evidence.json` has the same results with durations and other details, for
   scripts.
 
+`check` runs the probes the same way, into a run folder of its own, and
+sends your docs and that run's `evidence.md` to the model in one prompt. It
+checks every quote in the answer, then writes the report next to the
+evidence:
+
+- `report.md` lists the confirmed findings, then the suspect ones, each with
+  both quotes and the likely fix. Failed probes and dropped findings get
+  sections of their own.
+- `report.json` has the same report for scripts, with a format version.
+
+Both commands print the run folder's path on standard output. `check` also
+prints a one-line summary on standard error.
+
 `--output-dir PATH` keeps runs somewhere else, such as a systemd
 `StateDirectory`. The default `.doc-truth` folder gets its own `.gitignore`,
 so evidence doesn't end up in your docs repository by accident. The
 [configuration reference](docs/configuration.md#how-probes-run) explains how
 probes run: the shell, the environment, timeouts and output limits.
 
-A finding in the report will look like this:
+A finding in `report.md` looks like this:
 
-```markdown
-## Backup timer runs at 03:00, not 02:00
-- Doc says: docs/operations.md:42: "restic backs up nightly at 02:00"
-- Evidence says: systemd-timers: "restic-backup.timer ... *-*-* 03:00:00"
-- Confidence: CONFIRMED
-- Fix: doc edit
+````markdown
+### Backup timer runs at 03:00, not 02:00
+
+Contradiction · likely fix: edit the doc
+
+`docs/operations.md:42` says:
+
+> restic backs up nightly at 02:00
+
+Probe `systemd-timers` printed:
+
+```text
+Sat 2026-10-17 03:00:00 EEST  14h left  Fri 2026-10-16 03:00:02 EEST  9h ago  restic-backup.timer
 ```
+
+Why: The doc says the backup runs at 02:00, but the timer's last and next runs are at 03:00.
+````
 
 `validate` exits with `0` when the config is valid and `2` when it isn't.
 `collect` exits with `0` when every probe succeeded and `2` when any failed;
-it writes the evidence either way. `check` will exit with `0` when there is nothing new, `1` when there are new
-confirmed findings, and `2` when a probe or doc-truth itself failed. That
-makes it easy to run from cron or a systemd timer and alert on failure.
+it writes the evidence either way. `check` exits with `0` when there are no
+confirmed findings, `1` when there is at least one, and `2` when a probe or
+doc-truth itself failed; `2` wins over `1`. Suspect and dropped findings
+don't change the exit code. When a probe fails, `check` still writes the
+report, from the probes that worked. If the model can't be reached or its
+answer is unusable twice, `check` keeps the evidence and writes no report.
+The exit codes make it easy to run from cron or a systemd timer and alert on
+failure.
 
 ## Privacy
 
 The evidence and your docs go into the prompt. With a hosted model, they
 leave your machine. Run `doc-truth collect` first and read `evidence.md`: it
-is exactly the evidence that will be sent. Keep secrets out of probe output.
+shows what `check` sends, in exactly the form the model sees. `check` runs
+the probes again, so output that changes between runs can differ; the
+`evidence.md` in its own run folder is exactly what it sent. Keep secrets out
+of probe output.
 Run folders are readable only by the user who ran doc-truth. Support for
 local models through OpenAI-compatible endpoints (Ollama, llama.cpp, vLLM) is
 planned for v0.2, along with redaction.
@@ -193,8 +222,8 @@ planned for v0.2, along with redaction.
 ## Roadmap
 
 - **v0.1:** the config format and `validate` (done), `collect` (done),
-  `check`, quote verification, Markdown and JSON reports, exit codes, example
-  probes for systemd, cron and HTTP.
+  `check` with quote verification, Markdown and JSON reports and exit codes
+  (done), example probes for systemd, cron and HTTP.
 - **v0.2:** local models via OpenAI-compatible endpoints, a baseline file to
   acknowledge known findings, automatic checks for paths cited in the docs,
   redaction of secrets in evidence.

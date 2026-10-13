@@ -8,6 +8,7 @@ from doc_truth.config import Probe
 from doc_truth.evidence import (
     Evidence,
     ProbeResult,
+    code_span,
     evidence_json,
     evidence_markdown,
     format_size,
@@ -201,3 +202,16 @@ def test_the_json_keeps_text_readable_and_lists_exit_codes_in_order() -> None:
 )
 def test_format_size(size: int, expected: str) -> None:
     assert format_size(size) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("docs/ops.md", "`docs/ops.md`"),
+        ("a`b", "``a`b``"),
+        ("a``b`", "``` a``b` ```"),
+        ("`a", "`` `a ``"),
+    ],
+)
+def test_code_span(text: str, expected: str) -> None:
+    assert code_span(text) == expected
