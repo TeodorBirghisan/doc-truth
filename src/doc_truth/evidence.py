@@ -52,8 +52,8 @@ def evidence_json(evidence: Evidence) -> str:
         "user": evidence.user,
         "timezone": evidence.timezone,
         "utc_offset": evidence.utc_offset,
-        "started_at": _utc_timestamp(evidence.started_at),
-        "finished_at": _utc_timestamp(evidence.finished_at),
+        "started_at": utc_timestamp(evidence.started_at),
+        "finished_at": utc_timestamp(evidence.finished_at),
         "config": str(evidence.config_path),
         "probes": [_probe_json(result) for result in evidence.results],
     }
@@ -143,5 +143,12 @@ def blockquote(text: str) -> str:
     return "\n".join(f"> {line}".rstrip() for line in text.splitlines())
 
 
-def _utc_timestamp(moment: datetime) -> str:
+def code_span(text: str) -> str:
+    longest = max((len(run) for run in _BACKTICK_RUNS.findall(text)), default=0)
+    marker = "`" * (longest + 1)
+    padding = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{marker}{padding}{text}{padding}{marker}"
+
+
+def utc_timestamp(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

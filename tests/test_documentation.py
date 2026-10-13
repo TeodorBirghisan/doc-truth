@@ -14,7 +14,16 @@ from doc_truth.config import (
     load_config,
 )
 from doc_truth.evidence import format_size
-from doc_truth.runs import DEFAULT_OUTPUT_DIR_NAME, EVIDENCE_JSON, EVIDENCE_MARKDOWN, RUNS_DIR_NAME
+from doc_truth.findings import Confidence, DocQuote, Finding, Fix, Kind, ProbeQuote
+from doc_truth.report import finding_markdown
+from doc_truth.runs import (
+    DEFAULT_OUTPUT_DIR_NAME,
+    EVIDENCE_JSON,
+    EVIDENCE_MARKDOWN,
+    REPORT_JSON,
+    REPORT_MARKDOWN,
+    RUNS_DIR_NAME,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "docs" / "configuration.md"
@@ -76,7 +85,39 @@ def test_the_readme_describes_the_run_folder() -> None:
         f"`{DEFAULT_OUTPUT_DIR_NAME}/{RUNS_DIR_NAME}/<UTC time>/`",
         f"`{EVIDENCE_MARKDOWN}`",
         f"`{EVIDENCE_JSON}`",
+        f"`{REPORT_MARKDOWN}`",
+        f"`{REPORT_JSON}`",
         "`--output-dir PATH`",
     ]
 
     assert [fact for fact in facts if fact not in readme] == []
+
+
+def test_the_readme_shows_a_finding_the_way_the_report_writes_it() -> None:
+    finding = Finding(
+        kind=Kind.CONTRADICTION,
+        title="Backup timer runs at 03:00, not 02:00",
+        doc=DocQuote(
+            file="docs/operations.md",
+            line=42,
+            end_line=42,
+            quote="restic backs up nightly at 02:00",
+        ),
+        evidence=ProbeQuote(
+            probe="systemd-timers",
+            quote=(
+                "Sat 2026-10-17 03:00:00 EEST  14h left  "
+                "Fri 2026-10-16 03:00:02 EEST  9h ago  restic-backup.timer"
+            ),
+        ),
+        confidence=Confidence.CONFIRMED,
+        fix=Fix.DOC,
+        reason=(
+            "The doc says the backup runs at 02:00, but the timer's last and next runs "
+            "are at 03:00."
+        ),
+    )
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert f"````markdown\n{finding_markdown(finding)}\n````\n" in readme

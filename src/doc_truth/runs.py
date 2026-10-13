@@ -6,11 +6,14 @@ from pathlib import Path
 
 from doc_truth.config import Config
 from doc_truth.evidence import Evidence, evidence_json, evidence_markdown
+from doc_truth.report import Report, report_json, report_markdown
 
 DEFAULT_OUTPUT_DIR_NAME = ".doc-truth"
 RUNS_DIR_NAME = "runs"
 EVIDENCE_JSON = "evidence.json"
 EVIDENCE_MARKDOWN = "evidence.md"
+REPORT_JSON = "report.json"
+REPORT_MARKDOWN = "report.md"
 
 _GITIGNORE = "# Created by doc-truth. Run folders can contain sensitive probe output.\n*\n"
 
@@ -31,7 +34,7 @@ def prepare_runs_dir(config: Config, output_dir: Path | None) -> Path:
         if ignore_in_git:
             (output_dir / ".gitignore").write_text(_GITIGNORE, encoding="utf-8")
     except OSError as error:
-        raise RunsError(_cannot_write(output_dir, error)) from None
+        raise RunsError(_cannot_write("the evidence", output_dir, error)) from None
     return runs
 
 
@@ -39,16 +42,33 @@ def write_run(evidence: Evidence, runs: Path) -> Path:
     try:
         staging = Path(tempfile.mkdtemp(prefix=".incomplete-", dir=runs))
     except OSError as error:
-        raise RunsError(_cannot_write(runs, error)) from None
+        raise RunsError(_cannot_write("the evidence", runs, error)) from None
     try:
         (staging / EVIDENCE_JSON).write_text(evidence_json(evidence), encoding="utf-8")
         (staging / EVIDENCE_MARKDOWN).write_text(evidence_markdown(evidence), encoding="utf-8")
         return _publish(staging, runs / _run_name(evidence))
     except OSError as error:
-        raise RunsError(_cannot_write(runs, error)) from None
+        raise RunsError(_cannot_write("the evidence", runs, error)) from None
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+
+
+def write_report(report: Report, run: Path) -> None:
+    files = {REPORT_JSON: report_json(report), REPORT_MARKDOWN: report_markdown(report)}
+    staged: list[tuple[Path, Path]] = []
+    try:
+        for name, text in files.items():
+            staging = run / f".{name}.incomplete"
+            staged.append((staging, run / name))
+            staging.write_text(text, encoding="utf-8")
+        for staging, target in staged:
+            staging.rename(target)
+    except OSError as error:
+        raise RunsError(_cannot_write("the report", run, error)) from None
+    finally:
+        for staging, _ in staged:
+            staging.unlink(missing_ok=True)
 
 
 def _run_name(evidence: Evidence) -> str:
@@ -67,5 +87,5 @@ def _publish(staging: Path, run: Path) -> Path:
         attempt += 1
 
 
-def _cannot_write(directory: Path, error: OSError) -> str:
-    return f"cannot write the evidence to {directory}: {error.strerror or error}"
+def _cannot_write(what: str, directory: Path, error: OSError) -> str:
+    return f"cannot write {what} to {directory}: {error.strerror or error}"

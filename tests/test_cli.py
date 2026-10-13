@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 import sys
@@ -6,6 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import pytest
+from fakes import ANSWER, INIT, FakeClaude
 
 from doc_truth import cli
 from doc_truth.cli import main
@@ -304,3 +306,240 @@ def test_an_interrupted_run_exits_130(
 
     assert main(["collect", "-c", str(config)]) == 130
     assert capsys.readouterr() == ("", "doc-truth: interrupted\n")
+
+
+CHECK_CONFIG = """
+[[docs]]
+path = "docs/*.md"
+
+[[probes]]
+name = "timers"
+command = "echo 'restic-backup.timer *-*-* 03:00:00'"
+
+[model]
+name = "opus"
+"""
+OPERATIONS = """# Operations
+
+restic backs up nightly at 02:00.
+"""
+
+
+def check_finding(
+    *, confidence: str = "confirmed", doc_quote: str = "nightly at 02:00"
+) -> dict[str, object]:
+    return {
+        "kind": "contradiction",
+        "title": "Backups run at 03:00, not 02:00",
+        "doc": {"file": "docs/operations.md", "line": 3, "quote": doc_quote},
+        "evidence": {"probe": "timers", "quote": "*-*-* 03:00:00"},
+        "confidence": confidence,
+        "fix": "doc",
+        "reason": "The timer fires at 03:00.",
+    }
+
+
+@pytest.fixture
+def check_setup(tmp_path: Path, write_config: Callable[[str], Path]) -> Path:
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "operations.md").write_text(OPERATIONS, encoding="utf-8")
+    return write_config(CHECK_CONFIG)
+
+
+def answer_with(fake_claude: FakeClaude, *findings: dict[str, object]) -> None:
+    fake_claude.play(*ANSWER, answers={"*": json.dumps({"findings": findings})})
+
+
+def run_folder(out: str) -> Path:
+    return Path(out.removesuffix("\n"))
+
+
+def report_counts(run: Path) -> dict[str, int]:
+    counts: dict[str, int] = json.loads((run / "report.json").read_text(encoding="utf-8"))["counts"]
+    return counts
+
+
+def test_check_writes_the_report_next_to_the_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    check_setup: Path,
+    fake_claude: FakeClaude,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["check"]) == 0
+
+    out, err = capsys.readouterr()
+    run = run_folder(out)
+    assert run.parent == tmp_path / ".doc-truth" / "runs"
+    assert sorted(path.name for path in run.iterdir()) == [
+        "evidence.json",
+        "evidence.md",
+        "report.json",
+        "report.md",
+    ]
+    assert (run / "report.md").read_text(encoding="utf-8").startswith("# doc-truth report for `")
+    assert re.fullmatch(
+        r"\[1/1\] timers  ok      \d+\.\d\ds\n"
+        r"Probes: 1 ok, 0 failed\.\n"
+        r"Asking opus to compare the docs with the evidence\.\n"
+        r"No findings\.\n",
+        err,
+    )
+
+
+def test_check_sends_the_docs_and_the_evidence_unchanged(
+    capsys: pytest.CaptureFixture[str], check_setup: Path, fake_claude: FakeClaude
+) -> None:
+    main(["check", "-c", str(check_setup)])
+
+    run = run_folder(capsys.readouterr().out)
+    (call,) = fake_claude.calls()
+    assert "--model=opus" in call["argv"]
+    assert call["stdin"].startswith(
+        "# Documents\n\n## docs/operations.md\n\n```text\n"
+        "1: # Operations\n2:\n3: restic backs up nightly at 02:00.\n```\n\n"
+    )
+    assert call["stdin"].endswith((run / "evidence.md").read_text(encoding="utf-8"))
+
+
+def test_check_exits_1_on_a_confirmed_finding(
+    capsys: pytest.CaptureFixture[str], check_setup: Path, fake_claude: FakeClaude
+) -> None:
+    answer_with(fake_claude, check_finding())
+
+    assert main(["check", "-c", str(check_setup)]) == 1
+
+    out, err = capsys.readouterr()
+    assert report_counts(run_folder(out)) == {
+        "confirmed": 1,
+        "suspect": 0,
+        "dropped": 0,
+        "failed_probes": 0,
+    }
+    assert err.endswith("\n1 finding: 1 confirmed, 0 suspect.\n")
+
+
+def test_check_exits_0_when_every_finding_is_suspect(
+    capsys: pytest.CaptureFixture[str], check_setup: Path, fake_claude: FakeClaude
+) -> None:
+    answer_with(fake_claude, check_finding(confidence="suspect"))
+
+    assert main(["check", "-c", str(check_setup)]) == 0
+    assert report_counts(run_folder(capsys.readouterr().out))["suspect"] == 1
+
+
+def test_dropped_findings_leave_the_exit_code_alone(
+    capsys: pytest.CaptureFixture[str], check_setup: Path, fake_claude: FakeClaude
+) -> None:
+    answer_with(fake_claude, check_finding(doc_quote="nightly at 01:00"))
+
+    assert main(["check", "-c", str(check_setup)]) == 0
+
+    out, err = capsys.readouterr()
+    assert report_counts(run_folder(out))["dropped"] == 1
+    assert err.endswith("\nNo findings. 1 finding dropped.\n")
+
+
+def test_check_exits_2_when_a_probe_failed_even_with_confirmed_findings(
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+    check_setup: Path,
+    fake_claude: FakeClaude,
+) -> None:
+    config = write_config(CHECK_CONFIG + '[[probes]]\nname = "broken"\ncommand = "exit 1"\n')
+    answer_with(fake_claude, check_finding())
+
+    assert main(["check", "-c", str(config)]) == 2
+
+    out, err = capsys.readouterr()
+    assert report_counts(run_folder(out)) == {
+        "confirmed": 1,
+        "suspect": 0,
+        "dropped": 0,
+        "failed_probes": 1,
+    }
+    assert err.endswith("\n1 finding: 1 confirmed, 0 suspect. 1 probe failed.\n")
+
+
+def test_check_reads_the_docs_before_running_any_probe(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+    fake_claude: FakeClaude,
+) -> None:
+    config = write_config(
+        '[[docs]]\npath = "docs/*.md"\n[[probes]]\nname = "x"\ncommand = "touch ran"\n'
+    )
+
+    assert main(["check", "-c", str(config)]) == 2
+
+    assert capsys.readouterr() == (
+        "",
+        f'doc-truth: error: {config}: [[docs]] #1 "docs/*.md": no files match\n',
+    )
+    assert not (tmp_path / "ran").exists()
+    assert not (tmp_path / ".doc-truth").exists()
+    assert fake_claude.calls() == []
+
+
+def test_a_doc_that_is_not_utf8_stops_check_before_any_probe(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+    fake_claude: FakeClaude,
+) -> None:
+    (tmp_path / "ops.md").write_bytes(b"caf\xe9\n")
+    config = write_config(
+        '[[docs]]\npath = "ops.md"\n[[probes]]\nname = "x"\ncommand = "touch ran"\n'
+    )
+
+    assert main(["check", "-c", str(config)]) == 2
+
+    assert capsys.readouterr() == ("", "doc-truth: error: ops.md: is not valid UTF-8\n")
+    assert not (tmp_path / "ran").exists()
+    assert fake_claude.calls() == []
+
+
+def test_a_failed_model_call_keeps_the_evidence_and_writes_no_report(
+    capsys: pytest.CaptureFixture[str], check_setup: Path, fake_claude: FakeClaude
+) -> None:
+    failed = {"type": "result", "is_error": True, "result": "Not logged in · Please run /login"}
+    fake_claude.play(("out", INIT), ("out", failed), ("exit", 1))
+
+    assert main(["check", "-c", str(check_setup)]) == 2
+
+    out, err = capsys.readouterr()
+    assert sorted(path.name for path in run_folder(out).iterdir()) == [
+        "evidence.json",
+        "evidence.md",
+    ]
+    assert err.endswith(
+        "Asking opus to compare the docs with the evidence.\n"
+        "doc-truth: error: claude failed: Not logged in · Please run /login\n"
+    )
+
+
+def test_two_unusable_answers_stop_check(
+    capsys: pytest.CaptureFixture[str], check_setup: Path, fake_claude: FakeClaude
+) -> None:
+    fake_claude.play(*ANSWER, answers={"*": "Everything looks fine."})
+
+    assert main(["check", "-c", str(check_setup)]) == 2
+
+    out, err = capsys.readouterr()
+    assert not (run_folder(out) / "report.md").exists()
+    assert "doc-truth: error: the model's answer was unusable 2 times in a row;" in err
+    assert len(fake_claude.calls()) == 2
+
+
+def test_check_writes_to_the_output_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], check_setup: Path, fake_claude: FakeClaude
+) -> None:
+    assert main(["check", "-c", str(check_setup), "-o", str(tmp_path / "state")]) == 0
+
+    run = run_folder(capsys.readouterr().out)
+    assert run.parent == tmp_path / "state" / "runs"
+    assert (run / "report.md").is_file()
+    assert not (tmp_path / ".doc-truth").exists()

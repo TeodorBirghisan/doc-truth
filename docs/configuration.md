@@ -3,12 +3,6 @@
 doc-truth reads its settings from a TOML file, `doc-truth.toml` in the
 current directory unless you pass `--config PATH`.
 
-> [!NOTE]
-> `doc-truth validate` checks this format and `doc-truth collect` runs the
-> probes. `check`, which compares the docs with the evidence, is still being
-> built. Where a setting only matters to it, this page says what it will do
-> with it.
-
 ## Example
 
 ```toml
@@ -84,7 +78,7 @@ Each `[[docs]]` table names documents to check. At least one is required.
 
 ### `notes`
 
-`check` will give your notes to the model alongside the documents. Use them
+`check` gives your notes to the model alongside the documents. Use them
 for what the model can't work out by itself:
 
 - Which document is meant to be complete, so that something missing from it
@@ -128,9 +122,9 @@ describes the shell and the environment it runs in.
 
 A probe fails when it runs longer than `timeout`, which can be at most 3600
 seconds, or exits with a code that isn't in `success-exit-codes`. A failed
-probe is not evidence: `check` will tell the model that nothing can be
-concluded from it, so a broken probe can't turn into a false "missing"
-finding.
+probe is not evidence: `check` tells the model that nothing can be
+concluded from it and drops any finding that rests on it, so a broken probe
+can't turn into a false "missing" finding.
 
 Some commands answer with their exit code. `grep` exits with 1 when nothing
 matches, and `systemctl is-active` exits with 3 when a unit exists but isn't
@@ -144,7 +138,7 @@ proof: *"Lists system timers only; user timers need their own probe."*
 
 ## `[model]`
 
-Settings for the model that `check` will ask to compare the docs with the
+Settings for the model that `check` asks to compare the docs with the
 evidence. The table is optional, and so is each key.
 
 | Key | Type | Default | Meaning |
@@ -153,14 +147,14 @@ evidence. The table is optional, and so is each key.
 | `timeout` | number | `600` | Seconds to wait for the model's answer, at most 3600. |
 
 In v0.1, the model runs through [Claude Code](https://docs.anthropic.com/en/docs/claude-code),
-which must be installed and logged in. `check` will start it with every tool,
+which must be installed and logged in. `check` starts it with every tool,
 MCP server, hook and skill turned off, so the model can only read the prompt
 and answer it.
 
 ## How probes run
 
-`doc-truth collect` runs the probes one at a time, in the order they appear
-in the file. Each one runs:
+`doc-truth collect` and `doc-truth check` run the probes one at a time, in
+the order they appear in the file. Each one runs:
 
 - **With `bash -o pipefail`.** bash must be on `PATH`. With `pipefail`, a
   pipeline fails when any command in it fails, so in
