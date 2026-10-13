@@ -5,7 +5,14 @@ import pytest
 from doc_truth.config import Doc
 from doc_truth.evidence import FAILED_LABEL
 from doc_truth.findings import Confidence, Fix, Kind
-from doc_truth.prompt import PROMPT_VERSION, PromptError, build_prompt, split_lines, system_prompt
+from doc_truth.prompt import (
+    PROMPT_VERSION,
+    PromptError,
+    build_prompt,
+    read_docs,
+    split_lines,
+    system_prompt,
+)
 
 PROMPTS = Path(__file__).resolve().parents[1] / "src" / "doc_truth" / "prompts"
 EVIDENCE = "# Evidence from host `homeserver`\n\nCollected 2026-10-03.\n"
@@ -29,7 +36,7 @@ def test_the_message_has_every_doc_with_line_numbers_then_the_evidence(tmp_path:
         make_doc(tmp_path, "notes/a.md", "one line, no line break"),
     ]
 
-    prompt = build_prompt(docs, EVIDENCE)
+    prompt = build_prompt(read_docs(docs), EVIDENCE)
 
     assert prompt.user == (
         "# Documents\n\n"
@@ -53,7 +60,7 @@ def test_the_message_has_every_doc_with_line_numbers_then_the_evidence(tmp_path:
 def test_line_numbers_are_aligned(tmp_path: Path) -> None:
     doc = make_doc(tmp_path, "a.md", "".join(f"line {number}\n" for number in range(1, 11)))
 
-    user = build_prompt([doc], EVIDENCE).user
+    user = build_prompt(read_docs([doc]), EVIDENCE).user
 
     assert " 9: line 9\n10: line 10\n" in user
     assert " 1: line 1\n" in user
@@ -62,7 +69,7 @@ def test_line_numbers_are_aligned(tmp_path: Path) -> None:
 def test_every_note_is_quoted(tmp_path: Path) -> None:
     doc = make_doc(tmp_path, "a.md", "x\n", "First note.", "Second note,\nover two lines.")
 
-    user = build_prompt([doc], EVIDENCE).user
+    user = build_prompt(read_docs([doc]), EVIDENCE).user
 
     assert "Notes:\n\n> First note.\n\nNotes:\n\n> Second note,\n> over two lines.\n\n" in user
 
@@ -70,7 +77,7 @@ def test_every_note_is_quoted(tmp_path: Path) -> None:
 def test_a_doc_with_backticks_gets_a_longer_fence(tmp_path: Path) -> None:
     doc = make_doc(tmp_path, "a.md", "```sh\nrestic snapshots\n```\n")
 
-    user = build_prompt([doc], EVIDENCE).user
+    user = build_prompt(read_docs([doc]), EVIDENCE).user
 
     assert "````text\n1: ```sh\n2: restic snapshots\n3: ```\n````" in user
 
@@ -78,7 +85,7 @@ def test_a_doc_with_backticks_gets_a_longer_fence(tmp_path: Path) -> None:
 def test_an_empty_doc_is_described(tmp_path: Path) -> None:
     doc = make_doc(tmp_path, "empty.md", "")
 
-    user = build_prompt([doc], EVIDENCE).user
+    user = build_prompt(read_docs([doc]), EVIDENCE).user
 
     assert "## empty.md\n\nThe document is empty.\n\n# Evidence" in user
 
@@ -86,7 +93,7 @@ def test_an_empty_doc_is_described(tmp_path: Path) -> None:
 def test_a_byte_order_mark_is_not_part_of_the_first_line(tmp_path: Path) -> None:
     doc = make_doc(tmp_path, "a.md", b"\xef\xbb\xbf# Title\n")
 
-    assert "```text\n1: # Title\n```" in build_prompt([doc], EVIDENCE).user
+    assert "```text\n1: # Title\n```" in build_prompt(read_docs([doc]), EVIDENCE).user
 
 
 @pytest.mark.parametrize(
@@ -105,11 +112,20 @@ def test_lines_break_where_an_editor_breaks_them(text: str, lines: list[str]) ->
     assert split_lines(text) == lines
 
 
+def test_docs_are_read_into_the_lines_the_prompt_numbers(tmp_path: Path) -> None:
+    doc = make_doc(tmp_path, "a.md", b"\xef\xbb\xbfone\r\ntwo\fstill two\rthree\n")
+
+    (text,) = read_docs([doc])
+
+    assert text.doc is doc
+    assert text.lines == ("one", "two\fstill two", "three")
+
+
 def test_a_doc_that_isnt_utf8(tmp_path: Path) -> None:
     doc = make_doc(tmp_path, "latin1.md", "café\n".encode("latin-1"))
 
     with pytest.raises(PromptError, match=r"^latin1\.md: is not valid UTF-8$"):
-        build_prompt([doc], EVIDENCE)
+        read_docs([doc])
 
 
 def test_a_doc_that_cannot_be_read(tmp_path: Path) -> None:
@@ -117,7 +133,7 @@ def test_a_doc_that_cannot_be_read(tmp_path: Path) -> None:
     doc.path.chmod(0)
 
     with pytest.raises(PromptError, match=r"^secret\.md: cannot be read: Permission denied$"):
-        build_prompt([doc], EVIDENCE)
+        read_docs([doc])
 
 
 def test_the_system_prompt_is_the_versioned_file() -> None:

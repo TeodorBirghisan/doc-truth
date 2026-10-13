@@ -22,7 +22,17 @@ class Prompt:
     user: str
 
 
-def build_prompt(docs: Sequence[Doc], evidence_markdown: str) -> Prompt:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DocText:
+    doc: Doc
+    lines: tuple[str, ...]
+
+
+def read_docs(docs: Sequence[Doc]) -> tuple[DocText, ...]:
+    return tuple(DocText(doc=doc, lines=tuple(split_lines(_read(doc)))) for doc in docs)
+
+
+def build_prompt(docs: Sequence[DocText], evidence_markdown: str) -> Prompt:
     blocks = ["# Documents"]
     for doc in docs:
         blocks.extend(_doc_blocks(doc))
@@ -45,11 +55,12 @@ def split_lines(text: str) -> list[str]:
     return lines
 
 
-def _doc_blocks(doc: Doc) -> list[str]:
+def _doc_blocks(text: DocText) -> list[str]:
+    doc = text.doc
     blocks = [f"## {doc.display_path}"]
     for notes in doc.notes:
         blocks.append("Notes:\n\n" + blockquote(notes))
-    lines = split_lines(_read(doc))
+    lines = text.lines
     if not lines:
         blocks.append("The document is empty.")
         return blocks

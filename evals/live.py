@@ -13,7 +13,8 @@ from doc_truth.config import DEFAULT_MODEL, DEFAULT_MODEL_TIMEOUT, ModelSettings
 from doc_truth.evidence import evidence_markdown
 from doc_truth.findings import Finding, ProbeQuote
 from doc_truth.model import Answer, ModelError, ask_claude
-from doc_truth.prompt import Prompt, build_prompt
+from doc_truth.prompt import DocText, Prompt, build_prompt, read_docs
+from doc_truth.verify import Dropped, verify
 from evals.cases import Case, case_directories, load_case
 from evals.score import CaseScore, score
 
@@ -27,6 +28,7 @@ class Run:
     number: int
     answers: tuple[Answer, ...]
     findings: tuple[Finding, ...]
+    dropped: tuple[Dropped, ...]
     score: CaseScore | None
     error: str | None
 
@@ -68,8 +70,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = ModelSettings(name=args.model, timeout=args.timeout)
     output = RUNS_DIR / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     output.mkdir(parents=True)
+    docs = {case.name: read_docs(case.docs) for case in cases}
     prompts = {
-        case.name: build_prompt(case.docs, evidence_markdown(case.evidence)) for case in cases
+        case.name: build_prompt(docs[case.name], evidence_markdown(case.evidence)) for case in cases
     }
     for case in cases:
         prompt = prompts[case.name]
@@ -80,7 +83,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     def run(task: tuple[Case, int]) -> Run:
         case, number = task
-        result = _run_once(case, number, prompts[case.name], settings)
+        result = _run_once(case, number, prompts[case.name], docs[case.name], settings)
         _save(output / f"{case.name}-{number}.json", result)
         status = (
             "error" if result.error else "pass" if result.score and result.score.passed else "fail"
@@ -132,19 +135,29 @@ def _positive(text: str) -> int:
     return value
 
 
-def _run_once(case: Case, number: int, prompt: Prompt, settings: ModelSettings) -> Run:
+def _run_once(
+    case: Case, number: int, prompt: Prompt, docs: Sequence[DocText], settings: ModelSettings
+) -> Run:
     try:
         comparison = compare(prompt, partial(ask_claude, settings=settings))
     except InvalidAnswerError as error:
-        return Run(number=number, answers=error.answers, findings=(), score=None, error=str(error))
+        return _failed_run(number, error.answers, error)
     except ModelError as error:
-        return Run(number=number, answers=(), findings=(), score=None, error=str(error))
+        return _failed_run(number, (), error)
+    verification = verify(comparison.findings, docs, case.evidence.results)
     return Run(
         number=number,
         answers=comparison.answers,
-        findings=comparison.findings,
-        score=score(case.expected, comparison.findings),
+        findings=verification.findings,
+        dropped=verification.dropped,
+        score=score(case.expected, verification.findings),
         error=None,
+    )
+
+
+def _failed_run(number: int, answers: tuple[Answer, ...], error: Exception) -> Run:
+    return Run(
+        number=number, answers=answers, findings=(), dropped=(), score=None, error=str(error)
     )
 
 
@@ -162,6 +175,9 @@ def _save(path: Path, run: Run) -> None:
             "false_positives": run.score.false_positives,
             "allowed": run.score.allowed,
         },
+        "dropped": [
+            {"finding": _describe(item.finding), "problems": item.problems} for item in run.dropped
+        ],
         "answers": [
             {
                 "models": answer.models,
@@ -179,7 +195,7 @@ def _save(path: Path, run: Run) -> None:
 
 def _report(results: Sequence[CaseResult], settings: ModelSettings) -> str:
     width = max(len(result.case.name) for result in results)
-    lines = [f"{'case':<{width}}  must-find  wrong  errors  cost     result"]
+    lines = [f"{'case':<{width}}  must-find  wrong  dropped  errors  cost     result"]
     details: list[str] = []
     for result in results:
         must_find = result.case.expected.must_find
@@ -190,9 +206,10 @@ def _report(results: Sequence[CaseResult], settings: ModelSettings) -> str:
             for run in result.runs
             if run.score is not None
         )
+        dropped = sum(len(run.dropped) for run in result.runs)
         errors = sum(run.error is not None for run in result.runs)
         lines.append(
-            f"{result.case.name:<{width}}  {found:<9}  {wrong:<5}  {errors:<6}  "
+            f"{result.case.name:<{width}}  {found:<9}  {wrong:<5}  {dropped:<7}  {errors:<6}  "
             f"${result.cost_usd:<7.4f} {'pass' if result.passed else 'FAIL'}"
         )
         details.extend(_details(result))
@@ -223,6 +240,9 @@ def _details(result: CaseResult) -> list[str]:
     for run in result.runs:
         if run.error is not None:
             lines.append(f"{name} #{run.number}: {run.error}")
+        for item in run.dropped:
+            problems = "; ".join(item.problems)
+            lines.append(f"{name} #{run.number}: dropped: {_describe(item.finding)}: {problems}")
         if run.score is None:
             continue
         for index, matcher_id in run.score.violations:
@@ -237,14 +257,9 @@ def _details(result: CaseResult) -> list[str]:
 
 
 def _describe(finding: Finding) -> str:
-    doc = finding.doc
     evidence = finding.evidence
-    source = (
-        f"probe {evidence.probe}"
-        if isinstance(evidence, ProbeQuote)
-        else f"{evidence.file}:{evidence.line}"
-    )
-    return f"{doc.file}:{doc.line} vs {source} [{finding.confidence}] {finding.title}"
+    source = f"probe {evidence.probe}" if isinstance(evidence, ProbeQuote) else evidence.location
+    return f"{finding.doc.location} vs {source} [{finding.confidence}] {finding.title}"
 
 
 if __name__ == "__main__":
