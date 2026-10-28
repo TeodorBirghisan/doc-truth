@@ -1,7 +1,7 @@
-import re
 from pathlib import Path
 
 import pytest
+from examples import fenced_blocks
 
 from doc_truth.collect import LOCALE, MAX_STDERR, MAX_STDOUT, REMOVED_VARIABLES, STOP_GRACE
 from doc_truth.config import (
@@ -29,14 +29,9 @@ ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "docs" / "configuration.md"
 
 
-def toml_examples(document: Path) -> list[str]:
-    text = document.read_text(encoding="utf-8")
-    return re.findall(r"^```toml\n(.*?)^```$", text, flags=re.MULTILINE | re.DOTALL)
-
-
 @pytest.mark.parametrize("document", ["README.md", "docs/configuration.md"])
 def test_toml_examples_are_valid_configs(tmp_path: Path, document: str) -> None:
-    examples = toml_examples(ROOT / document)
+    examples = fenced_blocks(ROOT / document, "toml")
     assert examples, f"{document} has no TOML examples"
 
     for example in examples:
