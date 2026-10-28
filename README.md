@@ -134,13 +134,15 @@ command = "systemctl list-timers --all --no-pager"
 
 [[probes]]
 name = "sitemap"
-command = "curl -s -o /dev/null -w '%{http_code} %{content_type}' https://example.com/sitemap.xml"
+command = "curl -q -sS -o /dev/null --max-time 10 -w 'status=%{http_code} type=%{content_type} redirect=%{redirect_url}' https://example.com/sitemap.xml"
 timeout = 15
-notes = "Reports the HTTP status and content type only, not the body."
+notes = "Status, content type and redirect target of a GET request. The body isn't recorded."
 ```
 
 Paths are relative to the config file. The
-[configuration reference](docs/configuration.md) describes every setting.
+[configuration reference](docs/configuration.md) describes every setting,
+and the [probe recipes](docs/probes.md) cover systemd timers, cron, failure
+hooks, HTTP endpoints and tool versions, each with the trap it avoids.
 
 ```sh
 doc-truth validate   # check the config and list the docs and probes it resolves to
@@ -223,7 +225,8 @@ planned for v0.2, along with redaction.
 
 - **v0.1:** the config format and `validate` (done), `collect` (done),
   `check` with quote verification, Markdown and JSON reports and exit codes
-  (done), example probes for systemd, cron and HTTP.
+  (done), [probe recipes](docs/probes.md) for systemd, cron, HTTP and tool
+  versions (done).
 - **v0.2:** local models via OpenAI-compatible endpoints, a baseline file to
   acknowledge known findings, automatic checks for paths cited in the docs,
   redaction of secrets in evidence.
