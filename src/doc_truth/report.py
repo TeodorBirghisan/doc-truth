@@ -76,7 +76,7 @@ def report_markdown(report: Report) -> str:
     for heading, findings in (("Confirmed", report.confirmed), ("Suspect", report.suspect)):
         if findings:
             blocks.append(f"## {heading}")
-            blocks.extend(finding_markdown(finding) for finding in findings)
+            blocks.extend(_finding_markdown(finding) for finding in findings)
     if report.failed_probes:
         blocks.append("## Failed probes")
         blocks.append(
@@ -101,7 +101,7 @@ def report_markdown(report: Report) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
-def finding_markdown(finding: Finding) -> str:
+def _finding_markdown(finding: Finding) -> str:
     return "\n\n".join(
         [
             f"### {_one_line(finding.title)}",

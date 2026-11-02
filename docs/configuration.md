@@ -152,6 +152,13 @@ which must be installed and logged in. `check` starts it with every tool,
 MCP server, hook and skill turned off, so the model can only read the prompt
 and answer it.
 
+## Where runs are kept
+
+`doc-truth collect` and `doc-truth check` write each run to a new folder,
+`.doc-truth/runs/<UTC time>/` next to the config file. `--output-dir PATH` keeps
+the `runs` folder in `PATH` instead, such as a systemd `StateDirectory`. A
+relative `PATH` starts from the current directory, not from the config file.
+
 ## How probes run
 
 `doc-truth collect` and `doc-truth check` run the probes one at a time, in
