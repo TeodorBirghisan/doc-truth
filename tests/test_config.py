@@ -256,7 +256,7 @@ NAME_RULE = (
             '(did you mean "success-exit-codes"?)',
         ),
         (
-            'name = "uptime"\ncommand = "uptime"\nhost = "core"',
+            'name = "uptime"\ncommand = "uptime"\nhost = "homeserver"',
             '[[probes]] #1 "uptime": unknown key "host"',
         ),
         (

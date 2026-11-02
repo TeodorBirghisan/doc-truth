@@ -56,8 +56,8 @@ def result(
 def evidence(*results: ProbeResult) -> Evidence:
     return Evidence(
         tool_version="0.1.0",
-        host="core",
-        user="teo",
+        host="homeserver",
+        user="ops",
         timezone="EEST",
         utc_offset="+03:00",
         started_at=datetime(2026, 10, 4, 15, 4, 19, 512000, tzinfo=EEST),
@@ -130,8 +130,8 @@ def test_the_json_has_every_detail_for_scripts() -> None:
     assert data == {
         "format": 1,
         "doc_truth_version": "0.1.0",
-        "host": "core",
-        "user": "teo",
+        "host": "homeserver",
+        "user": "ops",
         "timezone": "EEST",
         "utc_offset": "+03:00",
         "started_at": "2026-10-04T12:04:19Z",

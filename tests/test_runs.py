@@ -39,8 +39,8 @@ def make_evidence(started_at: datetime = datetime(2026, 10, 4, 12, 4, 19, tzinfo
     )
     return Evidence(
         tool_version="0.1.0",
-        host="core",
-        user="teo",
+        host="homeserver",
+        user="ops",
         timezone="UTC",
         utc_offset="+00:00",
         started_at=started_at,
