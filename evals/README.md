@@ -1,9 +1,9 @@
 # Evaluation cases
 
-These cases pin down how `doc-truth check` has to behave before its prompt is
-written. Each one is a small set of docs, the evidence a host produced, and
-the findings a good answer must and must not contain. They come from real
-weekly runs of the script doc-truth grew out of, rewritten for a made-up host.
+These cases pin down how `doc-truth check` has to behave. Each one is a small
+set of docs, the evidence a host produced, and the findings a good answer must
+and must not contain. They come from real weekly runs of the script doc-truth
+grew out of, rewritten for a made-up host.
 
 ## Running the cases
 
