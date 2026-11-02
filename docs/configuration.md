@@ -28,9 +28,9 @@ Exit code 4 means the unit doesn't exist, and still counts as a failure.
 
 [[probes]]
 name = "sitemap"
-command = "curl -s -o /dev/null -w '%{http_code} %{content_type}' https://example.com/sitemap.xml"
+command = "curl -q -sS -o /dev/null --max-time 10 -w 'status=%{http_code} type=%{content_type} redirect=%{redirect_url}' https://example.com/sitemap.xml"
 timeout = 15
-notes = "Reports the HTTP status and content type only, not the body."
+notes = "Status, content type and redirect target of a GET request. The body isn't recorded."
 ```
 
 ## Checking the file
@@ -92,7 +92,8 @@ lines at the start and end, are removed.
 ## `[[probes]]`
 
 Each `[[probes]]` table is a command that collects evidence from the host. At
-least one is required.
+least one is required. The [probe recipes](probes.md) have tested ones for
+systemd timers, cron, failure hooks, HTTP endpoints and tool versions.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

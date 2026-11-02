@@ -44,7 +44,7 @@ files = ["src", "tests", "evals"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = ["--strict-markers", "--strict-config", "-rf"]
+addopts = ["--strict-markers", "--strict-config", "-rfs"]
 
 [dependency-groups]
 dev = [
