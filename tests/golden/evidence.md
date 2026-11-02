@@ -1,6 +1,6 @@
-# Evidence from host `core`
+# Evidence from host `homeserver`
 
-Collected 2026-10-04 12:04:19 UTC by doc-truth 0.1.0, running as user `teo`. The host's local time zone is EEST (UTC+03:00).
+Collected 2026-10-04 12:04:19 UTC by doc-truth 0.1.0, running as user `ops`. The host's local time zone is EEST (UTC+03:00).
 
 Each section below shows a read-only command from the config file and what it printed on this host. A probe marked PROBE FAILED produced no usable evidence: nothing can be concluded from it, least of all that something is missing.
 
