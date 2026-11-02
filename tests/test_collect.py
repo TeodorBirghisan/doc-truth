@@ -4,11 +4,12 @@ import shutil
 import signal
 import socket
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
 import pytest
-from processes import gone
+from processes import alive, gone
 
 from doc_truth import collect as collect_module
 from doc_truth.collect import (
@@ -147,13 +148,20 @@ def test_background_processes_are_stopped_when_the_shell_exits(
 def test_a_process_that_leaves_the_group_cannot_hang_the_run(
     run: Callable[..., ProbeResult], quick_stop: None
 ) -> None:
-    result = run("setsid sleep 30 & echo $!", timeout=10)
+    # The pid file proves setsid has run; until then, stopping the probe's group would reach it.
+    result = run(
+        "setsid sh -c 'echo $$ > pid; exec sleep 30' & "
+        "until [ -s pid ]; do sleep 0.01; done; cat pid",
+        timeout=10,
+    )
+    assert result.failure is None, result.stderr
     escaped = int(result.stdout)
     try:
-        assert result.failure is None
+        assert alive(escaped)
         assert result.duration < 3
     finally:
-        os.kill(escaped, signal.SIGKILL)
+        with suppress(ProcessLookupError):
+            os.kill(escaped, signal.SIGKILL)
 
 
 def test_output_over_the_limit_fails_the_probe_and_stops_it(
