@@ -8,7 +8,10 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
+from enum import StrEnum
 from pathlib import Path
+
+from doc_truth.findings import CitedLines, Confidence, Identity, Kind, ProbeOutput, normalised
 
 DEFAULT_CONFIG_NAME = "doc-truth.toml"
 DEFAULT_TIMEOUT = 30.0
@@ -21,6 +24,21 @@ TOP_LEVEL_KEYS = ("docs", "probes", "model")
 DOC_KEYS = ("path", "notes")
 PROBE_KEYS = ("name", "command", "timeout", "success-exit-codes", "notes")
 MODEL_KEYS = ("name", "timeout")
+KNOWN_KEYS = (
+    "id",
+    "title",
+    "kind",
+    "confidence",
+    "reason",
+    "acknowledged",
+    "until",
+    "doc",
+    "lines",
+    "probe",
+    "evidence-lines",
+    "other-doc",
+    "other-lines",
+)
 
 _PROBE_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _GLOB_CHARACTERS = frozenset("*?[")
@@ -79,12 +97,27 @@ class Config:
     probes: tuple[Probe, ...]
     model: ModelSettings = ModelSettings()
 
+    @property
+    def absolute_path(self) -> Path:
+        return self.base_dir / self.path.name
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Doc:
     path: Path
     display_path: str
     notes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Acknowledgement:
+    id: str
+    title: str
+    confidence: Confidence
+    reason: str
+    acknowledged: date
+    until: date | None
+    identity: Identity
 
 
 def load_config(path: Path) -> Config:
@@ -109,6 +142,7 @@ def load_config(path: Path) -> Config:
 def resolve_docs(config: Config) -> tuple[Doc, ...]:
     problems: list[str] = []
     files: dict[str, tuple[Path, list[str]]] = {}
+    known = os.path.realpath(known_path(config))
     for number, source in enumerate(config.docs, start=1):
         where = f"[[docs]] #{number} {_quote(source.path)}"
         pattern = os.path.expanduser(source.path)
@@ -124,13 +158,20 @@ def resolve_docs(config: Config) -> tuple[Doc, ...]:
             if not os.path.isfile(literal):
                 problems.append(f"{where}: file not found")
                 continue
+            if os.path.realpath(literal) == known:
+                problems.append(f"{where}: is the known-findings file, which the model never sees")
+                continue
             matches = [literal]
         else:
             candidates = (
                 config.base_dir / match
                 for match in glob.glob(pattern, root_dir=config.base_dir, recursive=True)
             )
-            matches = sorted(candidate for candidate in candidates if os.path.isfile(candidate))
+            matches = sorted(
+                candidate
+                for candidate in candidates
+                if os.path.isfile(candidate) and os.path.realpath(candidate) != known
+            )
             if not matches:
                 problems.append(f"{where}: no files match")
                 continue
@@ -145,6 +186,150 @@ def resolve_docs(config: Config) -> tuple[Doc, ...]:
         Doc(path=path, display_path=_display_path(path, config.base_dir), notes=tuple(notes))
         for path, notes in files.values()
     )
+
+
+def known_path(config: Config) -> Path:
+    return config.base_dir / f"{config.path.stem}-known.toml"
+
+
+def load_known(config: Config) -> tuple[Acknowledgement, ...]:
+    path = known_path(config)
+    if not path.exists():
+        return ()
+    data = _read_toml(path)
+    problems: list[str] = []
+    _reject_unknown_keys(data, ("known",), None, problems)
+    value = data.get("known")
+    entries = [] if value is None else _entries(value, "known", "known findings", problems)
+    known: list[Acknowledgement] = []
+    for number, entry in enumerate(entries, start=1):
+        where = _entry_label("known", number, entry, "id")
+        if not isinstance(entry, dict):
+            problems.append(f"{where}: must be a table, found {_describe(entry)}")
+            continue
+        acknowledgement = _acknowledgement(entry, where, problems)
+        if acknowledgement is not None:
+            known.append(acknowledgement)
+    if problems:
+        raise ConfigError(path, problems)
+    return tuple(known)
+
+
+def _acknowledgement(
+    entry: Mapping[str, object], where: str, problems: list[str]
+) -> Acknowledgement | None:
+    before = len(problems)
+    _reject_unknown_keys(entry, KNOWN_KEYS, where, problems)
+    id_ = _known_text(entry, "id", where, problems)
+    title = _known_text(entry, "title", where, problems)
+    reason = _known_text(entry, "reason", where, problems)
+    kind = _known_choice(entry, "kind", Kind, where, problems)
+    confidence = _known_choice(entry, "confidence", Confidence, where, problems)
+    acknowledged = _known_date(entry, "acknowledged", where, problems)
+    until = _known_date(entry, "until", where, problems) if "until" in entry else None
+    doc = _cited_lines(entry, "doc", "lines", where, problems)
+    evidence = _known_evidence(entry, where, problems)
+    if (
+        len(problems) > before
+        or id_ is None
+        or title is None
+        or reason is None
+        or kind is None
+        or confidence is None
+        or acknowledged is None
+        or doc is None
+        or evidence is None
+    ):
+        return None
+    return Acknowledgement(
+        id=id_,
+        title=title,
+        confidence=confidence,
+        reason=reason,
+        acknowledged=acknowledged,
+        until=until,
+        identity=Identity(kind=kind, doc=doc, evidence=evidence),
+    )
+
+
+def _known_evidence(
+    entry: Mapping[str, object], where: str, problems: list[str]
+) -> ProbeOutput | CitedLines | None:
+    if ("probe" in entry) == ("other-doc" in entry):
+        problems.append(f"{where}: must have either probe or other-doc")
+        return None
+    if "other-doc" in entry:
+        if "evidence-lines" in entry:
+            problems.append(f"{where}: evidence-lines goes with probe, not with other-doc")
+        return _cited_lines(entry, "other-doc", "other-lines", where, problems)
+    if "other-lines" in entry:
+        problems.append(f"{where}: other-lines goes with other-doc, not with probe")
+    probe = _known_text(entry, "probe", where, problems)
+    lines = _known_lines(entry, "evidence-lines", where, problems)
+    if probe is None or lines is None:
+        return None
+    return ProbeOutput(probe=probe, lines=lines)
+
+
+def _cited_lines(
+    entry: Mapping[str, object], file_key: str, lines_key: str, where: str, problems: list[str]
+) -> CitedLines | None:
+    file = _known_text(entry, file_key, where, problems)
+    lines = _known_lines(entry, lines_key, where, problems)
+    return None if file is None or lines is None else CitedLines(file=file, lines=lines)
+
+
+def _known_lines(
+    entry: Mapping[str, object], key: str, where: str, problems: list[str]
+) -> frozenset[str] | None:
+    value = entry.get(key)
+    if value is None:
+        problems.append(f"{where}: missing {key}")
+        return None
+    if not isinstance(value, list) or not value:
+        problems.append(f"{where}: {key} must be an array of lines, found {_describe(value)}")
+        return None
+    lines = [normalised(line) if isinstance(line, str) else "" for line in value]
+    if not all(lines):
+        problems.append(f"{where}: {key} must contain only lines of text")
+        return None
+    return frozenset(lines)
+
+
+def _known_text(
+    entry: Mapping[str, object], key: str, where: str, problems: list[str]
+) -> str | None:
+    # Entries copy text from docs and probe output, which can hold anything.
+    return _string(entry, key, where, problems, required=True, allow_nul=True)
+
+
+def _known_choice[E: StrEnum](
+    entry: Mapping[str, object], key: str, choices: type[E], where: str, problems: list[str]
+) -> E | None:
+    value = entry.get(key)
+    if value is None:
+        problems.append(f"{where}: missing {key}")
+    elif isinstance(value, str) and value in tuple(choices):
+        return choices(value)
+    else:
+        allowed = ", ".join(_quote(choice.value) for choice in choices)
+        problems.append(f"{where}: {key} must be one of {allowed}, found {_describe(value)}")
+    return None
+
+
+def _known_date(
+    entry: Mapping[str, object], key: str, where: str, problems: list[str]
+) -> date | None:
+    value = entry.get(key)
+    if value is None:
+        problems.append(f"{where}: missing {key}")
+    elif isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    else:
+        problems.append(
+            f"{where}: {key} must be a date such as 2026-12-01, found {_describe(value)}"
+        )
+    return None
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -293,6 +478,7 @@ def _string(
     problems: list[str],
     *,
     required: bool,
+    allow_nul: bool = False,
 ) -> str | None:
     value = table.get(key)
     if value is None:
@@ -302,7 +488,7 @@ def _string(
         problems.append(f"{where}: {key} must be a string, found {_describe(value)}")
     elif not value.strip():
         problems.append(f"{where}: {key} must not be empty")
-    elif "\0" in value:
+    elif "\0" in value and not allow_nul:
         problems.append(f"{where}: {key} must not contain a NUL character")
     else:
         return value

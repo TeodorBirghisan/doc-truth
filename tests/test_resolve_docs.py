@@ -41,6 +41,38 @@ def test_a_literal_path_resolves_to_that_file(
     )
 
 
+def test_a_pattern_never_picks_up_the_known_findings_file(
+    touch: Callable[..., None], config_with: Callable[..., Config]
+) -> None:
+    touch("doc-truth-known.toml", "notes.toml")
+
+    assert display_paths(config_with('path = "*.toml"')) == [
+        "doc-truth.toml",
+        "notes.toml",
+    ]
+
+
+def test_a_pattern_that_only_matches_the_known_findings_file_matches_nothing(
+    touch: Callable[..., None], config_with: Callable[..., Config]
+) -> None:
+    touch("doc-truth-known.toml")
+
+    assert resolve_problems(config_with('path = "*-known.toml"')) == (
+        '[[docs]] #1 "*-known.toml": no files match',
+    )
+
+
+def test_naming_the_known_findings_file_as_a_doc_is_an_error(
+    touch: Callable[..., None], config_with: Callable[..., Config]
+) -> None:
+    touch("doc-truth-known.toml")
+
+    assert resolve_problems(config_with('path = "doc-truth-known.toml"')) == (
+        '[[docs]] #1 "doc-truth-known.toml": is the known-findings file, '
+        "which the model never sees",
+    )
+
+
 def test_patterns_match_recursively_and_in_sorted_order(
     touch: Callable[..., None], config_with: Callable[..., Config]
 ) -> None:
@@ -177,3 +209,14 @@ def test_a_broken_symlink_is_not_found(tmp_path: Path, config_with: Callable[...
     assert resolve_problems(config_with('path = "gone.md"')) == (
         '[[docs]] #1 "gone.md": file not found',
     )
+
+
+def test_a_config_named_by_a_relative_path_knows_its_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_config: Callable[[str], Path]
+) -> None:
+    write_config('[[docs]]\npath = "x.md"\n' + PROBES)
+    monkeypatch.chdir(tmp_path)
+
+    config = load_config(Path("doc-truth.toml"))
+
+    assert config.absolute_path == Path.cwd() / "doc-truth.toml"

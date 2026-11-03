@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
-from examples import fenced_blocks
+from examples import config_examples, fenced_blocks
 
 from doc_truth.collect import find_shell, probe_environment, run_probe
 from doc_truth.config import Probe, load_config
@@ -119,7 +119,7 @@ def test_examples_elsewhere_run_the_recipe_of_the_same_name(
 ) -> None:
     path = tmp_path / "doc-truth.toml"
     shared: list[Probe] = []
-    for example in fenced_blocks(ROOT / document, "toml"):
+    for example in config_examples(ROOT / document):
         path.write_text(example, encoding="utf-8")
         shared += [probe for probe in load_config(path).probes if probe.name in recipes]
 

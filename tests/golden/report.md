@@ -1,15 +1,16 @@
 # doc-truth report for `homeserver`
 
-**4 findings: 3 confirmed, 1 suspect.** 2 probes failed. 2 findings dropped.
+**4 findings: 3 confirmed, 1 suspect.** 3 new. 1 acknowledged. 2 no longer reported. 2 not rechecked. 2 probes failed. 2 findings dropped.
 
 Checked 2026-10-13 07:05:09 UTC by doc-truth 0.1.0: 2 docs, 4 probes.
 Models: claude-sonnet-5-5, claude-haiku-5-5 (2 calls, 15,210 tokens in, 1,020 out, $0.04 as reported by Claude Code).
+Compared with run 20261006T070500Z.
 
 ## Confirmed
 
 ### Backup timer runs at 03:00, not 02:00
 
-Contradiction · likely fix: edit the doc
+`bde36b81` · New · Contradiction · likely fix: edit the doc
 
 `docs/operations.md:3` says:
 
@@ -25,7 +26,9 @@ Why: The evidence shows otherwise.
 
 ### node_exporter is version 1.9.1, not 1.8.2
 
-Contradiction · likely fix: edit the doc
+`74845a04` · Open for 3 runs · Contradiction · likely fix: edit the doc
+
+An acknowledgement of this ran out on 2026-10-01, so it counts again. Its reason was: Waiting for the new exporter.
 
 `docs/operations.md:12-13` says:
 
@@ -42,7 +45,7 @@ Why: ```json The doc pins 1.8.2; the binary reports 1.9.1.
 
 ### The apt notes still call noble-updates manual
 
-Cross-doc contradiction · likely fix: edit the doc
+`144f278d` · New · Cross-doc contradiction · likely fix: edit the doc
 
 `docs/apt.md:4` says:
 
@@ -59,7 +62,7 @@ Why: The evidence shows otherwise.
 
 ### Unattended upgrades may run on another schedule
 
-Stale status · likely fix: change the host
+`985562ac` · New · Stale status · likely fix: change the host
 
 `docs/operations.md:9` says:
 
@@ -72,6 +75,42 @@ apt-daily-upgrade.timer
 ```
 
 Why: The timer exists, but its schedule isn't shown.
+
+## Acknowledged
+
+These are known, each with a reason on record, so they are left out of the counts and the exit code. Delete an entry from the known-findings file to bring its finding back.
+
+### Snapshots run hourly, not daily
+
+`1f2e3d4c` · Confirmed, acknowledged on 2026-10-01 until 2026-12-01 · Contradiction · likely fix: edit the doc
+
+Reason: Hourly on purpose until the migration ends.
+
+`docs/operations.md:15` says:
+
+> Snapshots run daily.
+
+Probe `systemd-timers` printed:
+
+```text
+timeshift-hourly.timer
+```
+
+Why: The evidence shows otherwise.
+
+## No longer reported
+
+These were in the last run or are acknowledged, and what they rest on worked this time, but the model didn't report them. They may be fixed, but a model can also miss things, so this isn't proof.
+
+- `aaaa1111` in `docs/operations.md`: Caddy listens on 8443
+- `bbbb2222` in `docs/operations.md`: Grafana is on 11 (acknowledged)
+
+## Not rechecked
+
+These were in the last run or are acknowledged, but this run couldn't check them: a probe failed, a doc or probe has left the config, or the model's quotes didn't check out.
+
+- `cccc3333` in `docs/operations.md`: No user timers are set up
+- `dddd4444` in `docs/operations.md`: The old runbook says nightly (left the config, so it's listed only this once)
 
 ## Failed probes
 
