@@ -116,9 +116,13 @@ def test_the_reference_answers_pass_through_the_real_model_call(
 
     out = capsys.readouterr().out
     assert exit_code == 0
-    summary = f"10 of 10 cases passed, 10 runs, 10 calls with --model sonnet (answered by {MODEL})"
+    count = len(CASE_NAMES)
+    summary = (
+        f"{count} of {count} cases passed, {count} runs, {count} calls "
+        f"with --model sonnet (answered by {MODEL})"
+    )
     assert summary in out
-    assert f"12030 input and 500 output tokens, ${10 * COST_USD:.4f}." in out
+    assert f"{count * 1203} input and {count * 50} output tokens, ${count * COST_USD:.4f}." in out
     assert "timeshift-cron-contradiction  1/1        0      0        0       $0.0125  pass" in out
     (output,) = runs_dir.iterdir()
     assert f"Answers and prompts: {output}" in out

@@ -1,0 +1,9 @@
+[[must-not-find]]
+id = "spelling"
+doc = ["docs/daily-jobs.md:3-4", "docs/daily-jobs.md:6", "docs/daily-jobs.md:9", "docs/daily-jobs.md:11-12"]
+note = "Misspelt words around correct facts. Spelling and grammar mistakes aren't wrong claims."
+
+[[must-not-find]]
+id = "rounded-time"
+doc = ["docs/daily-jobs.md:8"]
+note = "The timer fires at 10:07, which is shortly after 10:00. A fair approximation isn't a wrong value."
