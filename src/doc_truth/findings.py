@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 _FENCED_BLOCK = re.compile(r"^```(?:json)?[ \t]*\n(.*?)\n```[ \t]*$", re.DOTALL | re.MULTILINE)
+_STRAIGHT_QUOTES = str.maketrans("\u2018\u2019\u201c\u201d", "''\"\"")
 
 
 class Kind(StrEnum):
@@ -52,6 +53,37 @@ class Finding:
     confidence: Confidence
     fix: Fix
     reason: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CitedLines:
+    file: str
+    lines: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProbeOutput:
+    probe: str
+    lines: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Identity:
+    kind: Kind
+    doc: CitedLines
+    evidence: ProbeOutput | CitedLines
+
+
+def words(text: str) -> list[str]:
+    return text.translate(_STRAIGHT_QUOTES).split()
+
+
+def normalised(text: str) -> str:
+    return " ".join(words(text))
+
+
+def one_line(text: str) -> str:
+    return " ".join(text.split())
 
 
 class FindingsError(Exception):

@@ -415,6 +415,10 @@ def test_check_exits_1_on_a_confirmed_finding(
     assert report_counts(run_folder(out)) == {
         "confirmed": 1,
         "suspect": 0,
+        "new": 1,
+        "acknowledged": 0,
+        "no_longer_reported": 0,
+        "not_rechecked": 0,
         "dropped": 0,
         "failed_probes": 0,
     }
@@ -457,6 +461,10 @@ def test_check_exits_2_when_a_probe_failed_even_with_confirmed_findings(
     assert report_counts(run_folder(out)) == {
         "confirmed": 1,
         "suspect": 0,
+        "new": 1,
+        "acknowledged": 0,
+        "no_longer_reported": 0,
+        "not_rechecked": 0,
         "dropped": 0,
         "failed_probes": 1,
     }

@@ -1,4 +1,5 @@
 import errno
+import json
 import os
 import stat
 from collections.abc import Callable
@@ -12,7 +13,14 @@ from doc_truth import runs as runs_module
 from doc_truth.config import Config, Probe
 from doc_truth.evidence import Evidence, ProbeResult, evidence_json, evidence_markdown
 from doc_truth.report import Report, report_json, report_markdown
-from doc_truth.runs import RunsError, prepare_runs_dir, write_report, write_run
+from doc_truth.runs import (
+    RunsError,
+    latest_report,
+    prepare_runs_dir,
+    runs_dir,
+    write_report,
+    write_run,
+)
 
 needs_permissions = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permissions")
 
@@ -284,3 +292,227 @@ def test_an_unwritable_run_folder_is_an_error_for_the_report(tmp_path: Path) -> 
 
     assert str(caught.value) == f"cannot write the report to {run}: Permission denied"
     assert sorted(path.name for path in run.iterdir()) == ["evidence.json", "evidence.md"]
+
+
+def write_report_file(run: Path, **fields: object) -> None:
+    run.mkdir(parents=True)
+    report = {
+        "format": 2,
+        "config": "/etc/doc-truth.toml",
+        "findings": [],
+        "not_rechecked": [],
+        "no_longer_reported": [],
+    }
+    (run / "report.json").write_text(json.dumps(report | fields), encoding="utf-8")
+
+
+def earlier_entry(id_: str, *, runs_open: int = 1) -> dict[str, object]:
+    return {
+        "id": id_,
+        "title": "A title",
+        "confidence": "confirmed",
+        "runs_open": runs_open,
+        "acknowledged": False,
+        "identity": {
+            "kind": "contradiction",
+            "doc": {"file": "docs/ops.md", "lines": ["A line."]},
+            "evidence": {"probe": "uptime", "lines": ["up 3 days"]},
+        },
+    }
+
+
+@pytest.fixture
+def config_at_etc() -> Config:
+    return make_config(Path("/etc"))
+
+
+def test_with_no_runs_there_is_no_previous_report(tmp_path: Path, config_at_etc: Config) -> None:
+    assert latest_report(tmp_path / "runs", config_at_etc) is None
+    assert latest_report(tmp_path, config_at_etc) is None
+
+
+def test_the_newest_report_is_the_previous_one(tmp_path: Path, config_at_etc: Config) -> None:
+    write_report_file(tmp_path / "20261019T080000Z", findings=[earlier_entry("old")])
+    write_report_file(tmp_path / "20261026T080000Z", findings=[earlier_entry("new")])
+    write_report_file(tmp_path / "20261012T080000Z", findings=[earlier_entry("older")])
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert previous.run == "20261026T080000Z"
+    assert [item.id for item in previous.findings] == ["new"]
+
+
+def test_a_run_without_a_report_is_skipped(tmp_path: Path, config_at_etc: Config) -> None:
+    write_report_file(tmp_path / "20261019T080000Z")
+    (tmp_path / "20261026T080000Z").mkdir()
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert previous.run == "20261019T080000Z"
+
+
+def test_a_half_written_run_is_skipped(tmp_path: Path, config_at_etc: Config) -> None:
+    write_report_file(tmp_path / ".incomplete-abc")
+
+    assert latest_report(tmp_path, config_at_etc) is None
+
+
+def test_a_stray_file_among_the_runs_is_skipped(tmp_path: Path, config_at_etc: Config) -> None:
+    (tmp_path / "20261026T080000Z").write_text("not a folder", encoding="utf-8")
+
+    assert latest_report(tmp_path, config_at_etc) is None
+
+
+def test_another_configs_run_does_not_count(tmp_path: Path, config_at_etc: Config) -> None:
+    write_report_file(tmp_path / "20261019T080000Z", findings=[earlier_entry("mine")])
+    write_report_file(tmp_path / "20261026T080000Z", config="/srv/other.toml")
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert [item.id for item in previous.findings] == ["mine"]
+
+
+def test_not_rechecked_findings_carry_over(tmp_path: Path, config_at_etc: Config) -> None:
+    write_report_file(
+        tmp_path / "20261026T080000Z",
+        findings=[earlier_entry("seen")],
+        not_rechecked=[earlier_entry("waiting", runs_open=3)],
+    )
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert [(item.id, item.runs_open) for item in previous.findings] == [
+        ("seen", 1),
+        ("waiting", 3),
+    ]
+
+
+def test_no_longer_reported_findings_can_be_found_but_do_not_carry_over(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    write_report_file(
+        tmp_path / "20261026T080000Z",
+        findings=[earlier_entry("open")],
+        no_longer_reported=[earlier_entry("gone")],
+    )
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert [item.id for item in previous.findings] == ["open"]
+    assert [item.id for item in previous.no_longer_reported] == ["gone"]
+
+
+def test_a_finding_that_left_the_config_does_not_carry_over(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    write_report_file(
+        tmp_path / "20261026T080000Z",
+        not_rechecked=[
+            {**earlier_entry("gone"), "left_config": True},
+            earlier_entry("waiting"),
+        ],
+    )
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert [item.id for item in previous.findings] == ["waiting"]
+
+
+def test_a_report_from_before_this_format_means_no_previous_report(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    write_report_file(tmp_path / "20261026T080000Z", format=1, findings=[{"title": "old"}])
+    write_report_file(tmp_path / "20261019T080000Z", findings=[earlier_entry("older")])
+
+    assert latest_report(tmp_path, config_at_etc) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not json",
+        "[]",
+        '{"format": 2, "config": "/etc/doc-truth.toml"}',
+        '{"format": 2, "config": "/etc/doc-truth.toml", "findings": 3, "not_rechecked": []}',
+        '{"format": 2, "config": "/etc/doc-truth.toml", "findings": [3], "not_rechecked": []}',
+        '{"format": 2, "config": "/etc/doc-truth.toml", "findings": [{}], "not_rechecked": []}',
+    ],
+)
+def test_an_unreadable_report_is_an_error(tmp_path: Path, config_at_etc: Config, text: str) -> None:
+    run = tmp_path / "20261026T080000Z"
+    run.mkdir()
+    (run / "report.json").write_text(text, encoding="utf-8")
+
+    with pytest.raises(RunsError, match=r"cannot read .*report\.json"):
+        latest_report(tmp_path, config_at_etc)
+
+
+def test_a_report_that_cannot_be_opened_is_an_error(tmp_path: Path, config_at_etc: Config) -> None:
+    (tmp_path / "20261026T080000Z" / "report.json").mkdir(parents=True)
+
+    with pytest.raises(RunsError, match=r"cannot read .*report\.json: Is a directory"):
+        latest_report(tmp_path, config_at_etc)
+
+
+@needs_permissions
+def test_a_newer_run_that_cannot_be_read_is_an_error_not_skipped(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    write_report_file(tmp_path / "20261026T080000Z")
+    locked = tmp_path / "20261102T080000Z"
+    write_report_file(locked)
+    locked.chmod(0)
+    try:
+        with pytest.raises(RunsError, match=r"cannot read .*report\.json: Permission denied"):
+            latest_report(tmp_path, config_at_etc)
+    finally:
+        locked.chmod(0o700)
+
+
+@pytest.mark.parametrize(("written_from", "read_from"), [("link", "real"), ("real", "link")])
+def test_the_same_config_reached_through_a_link_keeps_its_history(
+    tmp_path: Path, written_from: str, read_from: str
+) -> None:
+    (tmp_path / "real").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    runs = tmp_path / "runs"
+    write_report_file(
+        runs / "20261026T080000Z", config=str(tmp_path / written_from / "doc-truth.toml")
+    )
+
+    previous = latest_report(runs, make_config(tmp_path / read_from))
+
+    assert previous is not None
+    assert previous.run == "20261026T080000Z"
+
+
+def test_a_report_without_a_config_path_does_not_count(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    write_report_file(tmp_path / "20261026T080000Z", config=None)
+
+    assert latest_report(tmp_path, config_at_etc) is None
+
+
+def test_a_runs_path_that_is_not_a_folder_is_an_error(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    runs = tmp_path / "runs"
+    runs.write_text("not a folder", encoding="utf-8")
+
+    with pytest.raises(RunsError, match=r"cannot read .*runs: Not a directory"):
+        latest_report(runs, config_at_etc)
+
+
+def test_finding_the_runs_dir_creates_nothing(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+
+    assert runs_dir(config, None) == tmp_path / ".doc-truth" / "runs"
+    assert runs_dir(config, tmp_path / "elsewhere") == tmp_path / "elsewhere" / "runs"
+    assert list(tmp_path.iterdir()) == []

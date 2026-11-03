@@ -70,7 +70,7 @@ def collect(
         utc_offset=local.strftime("%:z"),
         started_at=started_at,
         finished_at=datetime.now(UTC),
-        config_path=config.base_dir / config.path.name,
+        config_path=config.absolute_path,
         results=tuple(results),
     )
 

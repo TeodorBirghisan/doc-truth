@@ -159,6 +159,52 @@ and answer it.
 the `runs` folder in `PATH` instead, such as a systemd `StateDirectory`. A
 relative `PATH` starts from the current directory, not from the config file.
 
+## Known findings
+
+`doc-truth ack` adds an entry to a file next to the config, named after it:
+`doc-truth.toml` gets `doc-truth-known.toml`, and `ops.toml` gets `ops-known.toml`.
+You don't have to create it. Commit it with your docs, so that an acknowledgement
+and its reason get reviewed. A `[[docs]]` pattern in that config never picks it
+up, so the model doesn't see it. `validate`, `check` and `ack` read it and stop on a problem,
+naming the entry. To bring a finding back, delete its `[[known]]` table; comments
+and hand edits stay, because `ack` only ever adds to the end.
+
+```toml
+[[known]]
+id = "17e92d54"
+title = "dpkg-db-backup.timer runs daily, not weekly"
+kind = "contradiction"
+confidence = "confirmed"
+reason = "Weekly is the plan; the timer change is on its way."
+acknowledged = 2026-11-02
+until = 2026-12-01
+doc = "docs/operations.md"
+lines = ["- `dpkg-db-backup.timer` backs up the package database once a week."]
+probe = "timer-schedules"
+evidence-lines = ["dpkg-db-backup.timer active waiting { OnCalendar=*-*-* 00:00:00 }"]
+```
+
+| Key | Type | Meaning |
+|---|---|---|
+| `id` | string | The finding's ID in the report it came from. Findings this entry covers show this ID in later reports, so two can share it. |
+| `title` | string | The finding's title. |
+| `kind` | string | `contradiction`, `cross-doc-contradiction`, `omission` or `stale-status`. A finding of another kind on the same line and evidence still matches. |
+| `confidence` | string | `confirmed` or `suspect`, as it was when acknowledged. An entry for a suspect finding stops covering it once it's confirmed. |
+| `reason` | string | Why this is known and accepted for now. |
+| `acknowledged` | date | The day it was acknowledged. |
+| `until` | date | Optional. The last day this holds; after it, the finding counts again. |
+| `doc` | string | The doc the finding cites. |
+| `lines` | array of strings | The text of the cited lines. All must still be in the doc, and a finding must cite at least one of them. |
+| `probe` | string | The probe the finding rests on. |
+| `evidence-lines` | array of strings | The whole lines of output the evidence quote came from. All must still be printed, and a finding must quote at least one of them. |
+| `other-doc` | string | For a cross-doc contradiction, instead of `probe` and `evidence-lines`: the other doc. |
+| `other-lines` | array of strings | The text of the cited lines in `other-doc`. All must still be there. |
+
+All are required except `until`, and an entry has either `probe` and `evidence-lines`,
+or `other-doc` and `other-lines`. A cross-doc entry matches with the two docs in either
+order, as long as both sides have a line in common. Spacing and curly quotes in a line
+don't matter.
+
 ## How probes run
 
 `doc-truth collect` and `doc-truth check` run the probes one at a time, in

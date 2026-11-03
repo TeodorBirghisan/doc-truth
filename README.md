@@ -174,6 +174,7 @@ hooks, HTTP endpoints and tool versions, each with the trap it avoids.
 doc-truth validate   # check the config and list the docs and probes it resolves to
 doc-truth collect    # run the probes and write the evidence; no model call
 doc-truth check      # run the probes, compare the docs with the evidence, write the report
+doc-truth ack ID --reason "..."   # record a finding from the latest report as known
 ```
 
 `collect` runs the probes one at a time and writes what they print to a new
@@ -191,7 +192,8 @@ checks every quote in the answer, then writes the report next to the
 evidence:
 
 - `report.md` lists the confirmed findings, then the suspect ones, each with
-  both quotes and the likely fix. Failed probes and dropped findings get
+  both quotes and the likely fix.
+  [Known findings](#known-findings), failed probes and dropped findings get
   sections of their own.
 - `report.json` has the same report for scripts, with a format version.
 
@@ -212,14 +214,14 @@ claim went unchecked instead of becoming a finding:
 ````markdown
 **1 finding: 1 confirmed, 0 suspect.** 1 probe failed.
 
-Checked 2026-11-02 18:26:34 UTC by doc-truth 0.1.0.dev0: 1 doc, 2 probes.
-Model: claude-sonnet-5-5 (1 call, 3,872 tokens in, 290 out, $0.02 as reported by Claude Code).
+Checked 2026-11-02 19:35:59 UTC by doc-truth 0.1.0.dev0: 1 doc, 2 probes.
+Model: claude-sonnet-5-5 (1 call, 3,873 tokens in, 303 out, $0.01 as reported by Claude Code).
 
 ## Confirmed
 
 ### dpkg-db-backup.timer runs daily, not weekly
 
-Contradiction · likely fix: edit the doc
+`17e92d54` · New · Contradiction · likely fix: edit the doc
 
 `docs/operations.md:6` says:
 
@@ -231,7 +233,7 @@ Probe `timer-schedules` printed:
 dpkg-db-backup.timer active waiting { OnCalendar=*-*-* 00:00:00 }
 ```
 
-Why: The timer is active and its calendar is every day at 00:00:00, with no weekday restriction. The document says it runs once a week.
+Why: The timer is active and its OnCalendar is every day at 00:00:00, with no weekday restriction, so it fires daily rather than once a week.
 
 ## Failed probes
 
@@ -248,11 +250,78 @@ A failed probe is no evidence, so no finding rests on one. Claims that only thes
 `collect` exits with `0` when every probe succeeded and `2` when any failed;
 it writes the evidence either way. `check` exits with `0` when there are no
 confirmed findings, `1` when there is at least one, and `2` when a probe or
-doc-truth itself failed; `2` wins over `1`. Suspect and dropped findings
-don't change the exit code. When a probe fails, `check` still writes the
+doc-truth itself failed; `2` wins over `1`. Suspect, dropped and
+[acknowledged](#known-findings) findings don't change the exit code. When a probe fails, `check` still writes the
 report, from the probes that worked. If the model can't be reached or its
 answer is unusable twice, `check` keeps the evidence and writes no report.
 A cron job or systemd timer can alert on these exit codes.
+
+## Known findings
+
+Some findings stay true for a while: you know about them, and the fix is on its
+way. Each finding in a report has a short ID and says whether it's new or how
+many runs it has been open, compared with the last run of the same config. A
+confirmed finding that stays open keeps failing `check` until it's gone or you
+acknowledge it, with a reason:
+
+```sh
+doc-truth ack 17e92d54 --reason "Weekly is the plan; the timer change is on its way"
+doc-truth ack 17e92d54 --reason "Waiting for the migration" --until 2026-12-01
+```
+
+`ack` looks the ID up in the latest report and adds an entry to
+`doc-truth-known.toml` next to the config, without running a probe or a model.
+If `check` ran with `--output-dir`, give `ack` the same one.
+Commit that file with your docs, so the reason gets reviewed. It holds the cited
+doc lines and lines of probe output, so read it first. To bring a finding back,
+delete its table. The [configuration reference](docs/configuration.md#known-findings)
+describes the file.
+
+From then on, the report lists the finding under **Acknowledged**, with its reason
+and its current quotes, and leaves it out of the counts and the exit code. The
+model is never told what's known, so it can't hide anything. The finding counts
+again when:
+
+- its `--until` date has passed;
+- the line of probe output it quotes changes, such as a schedule moving from 03:00
+  to 04:00;
+- a doc line it cites changes, because then someone should look again;
+- it was suspect when you acknowledged it and is confirmed now.
+
+Two more sections cover what didn't come back:
+
+- **No longer reported:** it was in the last run or is acknowledged, what it rests
+  on worked this time, and the model didn't report it. It may be fixed, but a
+  model can also miss things, so this isn't proof. You can still `ack` it by its ID.
+  An acknowledgement stays listed until you delete its entry.
+- **Not rechecked:** a probe failed, a doc or probe has left the config, or the
+  model's quotes didn't check out, so this run can't say. A finding whose doc or
+  probe left the config is listed once and then dropped, unless it's acknowledged.
+
+doc-truth recognises a finding by comparing whole lines of text, not line numbers
+or the model's wording: the same doc, the same probe and at least one cited line in
+common, so edits elsewhere in the doc don't matter. An acknowledgement asks for more:
+the finding must quote the same line of output, and every doc line and line of output
+the acknowledgement recorded must still be there. So it holds however the model quotes
+that line this time, and ends as soon as the line changes. Four limits report too
+much:
+
+- When the model cites a different line for the same problem, the finding looks new.
+- An acknowledgement won't hold if its line of output changes every run, as the
+  countdown columns of `systemctl list-timers` do. The
+  [`timer-schedules` recipe](docs/probes.md#systemd-timers-schedules) prints steady lines.
+- When the model misses a finding for one run, it comes back as new.
+- When one finding goes and another appears on the same table row and probe, the new
+  one can show as still open. It still counts.
+
+Two limits go the other way. An acknowledgement covers any finding on the same doc
+line and line of output, so a second problem resting on those same two lines is filed
+under it, still listed with its quotes. And a short quote that fits several lines of
+output is tied to the first of them.
+
+Apart from omissions, which must also quote the same line of output, a finding's kind
+isn't compared, because a contradiction and a stale status are often two fair
+descriptions of the same problem.
 
 ## Troubleshooting
 
@@ -307,7 +376,9 @@ shows what `check` sends, in exactly the form the model sees. `check` runs
 the probes again, so output that changes between runs can differ; the
 `evidence.md` in its own run folder is exactly what it sent. Keep secrets out
 of probe output.
-Run folders are readable only by the user who ran doc-truth. Support for
+Run folders are readable only by the user who ran doc-truth. The
+[known-findings file](#known-findings) is meant to be committed, and holds the
+quotes of the findings you acknowledge. Support for
 local models through OpenAI-compatible endpoints (Ollama, llama.cpp, vLLM) is
 planned for v0.2, along with redaction.
 
@@ -339,11 +410,11 @@ doc-truth is designed around that lesson.
 - **v0.1:** the config format and `validate` (done), `collect` (done),
   `check` with quote verification, Markdown and JSON reports and exit codes
   (done), [probe recipes](docs/probes.md) for systemd, cron, HTTP and tool
-  versions (done). Still planned: a few weeks on a real server next to the
-  script it replaces, a tested timer example, and the first release on PyPI.
-- **v0.2:** local models via OpenAI-compatible endpoints, a baseline file to
-  acknowledge known findings, automatic checks for paths cited in the docs,
-  redaction of secrets in evidence.
+  versions (done), [known findings](#known-findings) (done, ahead of plan). Still
+  planned: a few weeks on a real server next to the script it replaces, a tested
+  timer example, and the first release on PyPI.
+- **v0.2:** local models via OpenAI-compatible endpoints, automatic checks for
+  paths cited in the docs, redaction of secrets in evidence.
 - **v0.3:** a Claude Code plugin with an interactive command for running the
   check and working through its findings.
 

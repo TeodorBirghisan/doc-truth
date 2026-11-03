@@ -1,22 +1,41 @@
 import argparse
 import sys
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from functools import partial
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from doc_truth.collect import CollectError, collect
 from doc_truth.compare import InvalidAnswerError, compare
-from doc_truth.config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config, resolve_docs
+from doc_truth.config import (
+    DEFAULT_CONFIG_NAME,
+    Config,
+    ConfigError,
+    known_path,
+    load_config,
+    load_known,
+    resolve_docs,
+)
 from doc_truth.evidence import Evidence, ProbeResult, evidence_markdown
+from doc_truth.findings import one_line
+from doc_truth.known import (
+    AckError,
+    PreviousReport,
+    acknowledge,
+    already_acknowledged,
+    append_known,
+    track,
+)
 from doc_truth.model import ModelError, ask_claude
 from doc_truth.prompt import PromptError, build_prompt, read_docs
 from doc_truth.report import Report, summary
 from doc_truth.runs import (
     DEFAULT_OUTPUT_DIR_NAME,
     RunsError,
+    latest_report,
     prepare_runs_dir,
+    runs_dir,
     write_report,
     write_run,
 )
@@ -29,6 +48,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "validate": _validate,
         "collect": _collect,
         "check": _check,
+        "ack": _ack,
     }
     try:
         return commands[args.command](args)
@@ -39,6 +59,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         PromptError,
         ModelError,
         InvalidAnswerError,
+        AckError,
     ) as error:
         print(f"doc-truth: error: {error}", file=sys.stderr)
         return 2
@@ -85,12 +106,32 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Run every probe, ask the model to compare the docs with the evidence, check "
             "every quote it gives and write a report next to the evidence in a new run "
-            "folder, whose path is printed on standard output. Exits with 0 when there are "
-            "no confirmed findings, 1 when there are, and 2 when a probe or doc-truth failed."
+            "folder, whose path is printed on standard output. Exits with 0 when no confirmed "
+            "finding is left unacknowledged, 1 when one is, and 2 when a probe or doc-truth "
+            "failed."
         ),
     )
     _add_config_argument(check)
     _add_output_dir_argument(check)
+    ack = commands.add_parser(
+        "ack",
+        help="record a finding from the latest report as known, with a reason",
+        description=(
+            "Record a finding from the latest report in the known-findings file next to the "
+            "config, so later checks list it as acknowledged and leave it out of the exit code. "
+            "No probe or model runs. Delete its entry from that file to bring the finding back."
+        ),
+    )
+    ack.add_argument("id", metavar="ID", help="the finding's ID, as the report shows it")
+    ack.add_argument("--reason", required=True, help="why this is known and accepted for now")
+    ack.add_argument(
+        "--until",
+        type=date.fromisoformat,
+        metavar="YYYY-MM-DD",
+        help="the last day this holds; after it, the finding counts again",
+    )
+    _add_config_argument(ack)
+    _add_output_dir_argument(ack)
     return parser
 
 
@@ -121,6 +162,7 @@ def _add_output_dir_argument(parser: argparse.ArgumentParser) -> None:
 def _validate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     docs = resolve_docs(config)
+    known = load_known(config)
     name_width = max(len(probe.name) for probe in config.probes)
     print(f"{config.path} is valid.")
     print()
@@ -131,6 +173,11 @@ def _validate(args: argparse.Namespace) -> int:
     print(f"Probes ({len(config.probes)}):")
     for probe in config.probes:
         print(f"  {probe.name:<{name_width}}  timeout {probe.timeout:g}s")
+    if known:
+        print()
+        print(f"Known findings ({len(known)}):")
+        for acknowledgement in known:
+            print(f"  {acknowledgement.id}  {one_line(acknowledgement.title)}")
     return 0
 
 
@@ -144,8 +191,10 @@ def _collect(args: argparse.Namespace) -> int:
 
 def _check(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    known = load_known(config)
     docs = read_docs(resolve_docs(config))
     runs = prepare_runs_dir(config, args.output_dir)
+    previous = _previous_report(runs, config)
     evidence = _run_probes(config)
     run = write_run(evidence, runs)
     print(run, flush=True)
@@ -157,21 +206,75 @@ def _check(args: argparse.Namespace) -> int:
     )
     comparison = compare(prompt, partial(ask_claude, settings=config.model))
     verification = verify(comparison.findings, docs, evidence.results)
+    tracking = track(
+        verification.findings,
+        dropped=verification.dropped,
+        docs=docs,
+        results=evidence.results,
+        known=known,
+        previous=previous,
+        today=date.today(),
+    )
     report = Report(
         evidence=evidence,
         docs=tuple(text.doc.display_path for text in docs),
         prompt_version=prompt.version,
         requested_model=config.model.name,
         answers=comparison.answers,
-        findings=verification.findings,
+        findings=tracking.findings,
         dropped=verification.dropped,
         finished_at=datetime.now(UTC),
+        previous_run=None if previous is None else previous.run,
+        no_longer_reported=tracking.no_longer_reported,
+        not_rechecked=tracking.not_rechecked,
     )
     write_report(report, run)
     print(summary(report), file=sys.stderr)
     if report.failed_probes:
         return 2
     return 1 if report.confirmed else 0
+
+
+def _previous_report(runs: Path, config: Config) -> PreviousReport | None:
+    try:
+        return latest_report(runs, config)
+    except RunsError as error:
+        print(
+            f"doc-truth: warning: {error}; every finding counts as new this run",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+
+def _ack(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    known = load_known(config)
+    today = date.today()
+    reason = one_line(args.reason)
+    if not reason:
+        raise AckError("--reason must not be empty")
+    if args.until is not None and args.until < today:
+        raise AckError(f"--until {args.until} is in the past")
+    runs = runs_dir(config, args.output_dir)
+    previous = latest_report(runs, config)
+    if previous is None:
+        raise AckError(
+            f"there is no report with finding IDs for this config in {runs}; "
+            "run doc-truth check, or give ack the --output-dir that check used"
+        )
+    findings = (*previous.findings, *previous.no_longer_reported)
+    finding = next((item for item in findings if item.id == args.id), None)
+    if finding is None:
+        listed = ", ".join(item.id for item in findings) or "it has no findings"
+        raise AckError(f"{args.id} can't be acknowledged from run {previous.run} ({listed})")
+    path = known_path(config)
+    if already_acknowledged(finding, known, today):
+        raise AckError(f"{args.id} is already acknowledged; edit its entry in {path} to change it")
+    append_known(path, acknowledge(finding, reason=reason, today=today, until=args.until))
+    print(f"Acknowledged {finding.id}: {one_line(finding.title)}")
+    print(f"Recorded in {path}. Commit it with your docs, so the reason gets reviewed.")
+    return 0
 
 
 def _run_probes(config: Config) -> Evidence:

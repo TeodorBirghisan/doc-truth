@@ -1,4 +1,6 @@
 import errno
+import json
+import os
 import shutil
 import tempfile
 from datetime import UTC
@@ -6,7 +8,8 @@ from pathlib import Path
 
 from doc_truth.config import Config
 from doc_truth.evidence import Evidence, evidence_json, evidence_markdown
-from doc_truth.report import Report, report_json, report_markdown
+from doc_truth.known import Earlier, PreviousReport, earlier_from_json
+from doc_truth.report import REPORT_FORMAT, Report, report_json, report_markdown
 
 DEFAULT_OUTPUT_DIR_NAME = ".doc-truth"
 RUNS_DIR_NAME = "runs"
@@ -22,20 +25,83 @@ class RunsError(Exception):
     pass
 
 
+def runs_dir(config: Config, output_dir: Path | None) -> Path:
+    base = config.base_dir / DEFAULT_OUTPUT_DIR_NAME if output_dir is None else output_dir
+    return base.absolute() / RUNS_DIR_NAME
+
+
 def prepare_runs_dir(config: Config, output_dir: Path | None) -> Path:
-    if output_dir is None:
-        output_dir = config.base_dir / DEFAULT_OUTPUT_DIR_NAME
-        ignore_in_git = not output_dir.exists()
-    else:
-        ignore_in_git = False
-    runs = output_dir.absolute() / RUNS_DIR_NAME
+    ignore_in_git = output_dir is None and not runs_dir(config, None).parent.exists()
+    runs = runs_dir(config, output_dir)
     try:
         runs.mkdir(parents=True, exist_ok=True)
         if ignore_in_git:
-            (output_dir / ".gitignore").write_text(_GITIGNORE, encoding="utf-8")
+            (runs.parent / ".gitignore").write_text(_GITIGNORE, encoding="utf-8")
     except OSError as error:
-        raise RunsError(_cannot_write("the evidence", output_dir, error)) from None
+        raise RunsError(_cannot_write("the evidence", runs.parent, error)) from None
     return runs
+
+
+def latest_report(runs: Path, config: Config) -> PreviousReport | None:
+    config_path = os.path.realpath(config.absolute_path)
+    try:
+        folders = sorted(
+            (path for path in runs.iterdir() if not path.name.startswith(".")),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise RunsError(f"cannot read {runs}: {error.strerror or error}") from None
+    for folder in folders:
+        path = folder / REPORT_JSON
+        data = _read_report(path)
+        if data is None:
+            continue
+        written_for = data.get("config")
+        if not isinstance(written_for, str) or os.path.realpath(written_for) != config_path:
+            continue
+        if data.get("format") != REPORT_FORMAT:
+            return None
+        return PreviousReport(
+            run=folder.name,
+            findings=_earlier_findings(data, path, "findings", "not_rechecked"),
+            no_longer_reported=_earlier_findings(data, path, "no_longer_reported"),
+        )
+    return None
+
+
+def _read_report(path: Path) -> dict[str, object] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError, NotADirectoryError:
+        return None
+    except OSError as error:
+        raise RunsError(f"cannot read {path}: {error.strerror or error}") from None
+    except ValueError:
+        raise RunsError(f"cannot read {path}: it isn't valid JSON") from None
+    if not isinstance(data, dict):
+        raise RunsError(f"cannot read {path}: it isn't a report")
+    return data
+
+
+def _earlier_findings(data: dict[str, object], path: Path, *keys: str) -> tuple[Earlier, ...]:
+    try:
+        return tuple(
+            earlier_from_json(entry)
+            for key in keys
+            for entry in _entries(data[key])
+            if entry.get("left_config") is not True
+        )
+    except KeyError, TypeError, ValueError:
+        raise RunsError(f"cannot read {path}: its findings aren't in the expected form") from None
+
+
+def _entries(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list) or not all(isinstance(entry, dict) for entry in value):
+        raise ValueError("expected a list of objects")
+    return value
 
 
 def write_run(evidence: Evidence, runs: Path) -> Path:
