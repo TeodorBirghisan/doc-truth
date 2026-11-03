@@ -54,7 +54,7 @@ def test_the_message_has_every_doc_with_line_numbers_then_the_evidence(tmp_path:
         "```\n\n" + EVIDENCE
     )
     assert prompt.system == system_prompt()
-    assert prompt.version == PROMPT_VERSION == 1
+    assert prompt.version == PROMPT_VERSION == 2
 
 
 def test_line_numbers_are_aligned(tmp_path: Path) -> None:

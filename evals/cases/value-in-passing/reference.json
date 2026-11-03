@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "kind": "contradiction",
+      "title": "The health check runs at 10:07, not 10:00",
+      "doc": {
+        "file": "docs/operations.md",
+        "line": 43,
+        "quote": "the 10:00 health check is"
+      },
+      "evidence": {
+        "probe": "custom-timers",
+        "quote": "health-check.timer          { OnCalendar=*-*-* 10:07:00"
+      },
+      "confidence": "confirmed",
+      "fix": "doc",
+      "reason": "The manual calls it the 10:00 health check, but its timer fires at 10:07, as the manual's own table says."
+    }
+  ]
+}

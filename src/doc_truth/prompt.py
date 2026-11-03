@@ -6,7 +6,7 @@ from importlib.resources import files
 from doc_truth.config import Doc
 from doc_truth.evidence import blockquote, fence
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2
 
 _LINE_BREAK = re.compile(r"\r\n|\r|\n")
 

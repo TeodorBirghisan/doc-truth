@@ -45,6 +45,8 @@ the reasons are listed under the table.
 | `history-note` | reports nothing from lines that record what used to be true |
 | `stale-status` | finds a job described as planned that already runs |
 | `clean` | reports nothing |
+| `spelling-and-rounding` | reports nothing from misspelt words around correct facts, or from a time that's fairly rounded |
+| `value-in-passing` | finds a wrong time mentioned in passing, in a sentence about another job in a long manual |
 | `haystack` | finds one schedule drift among 12 docs and 14 probes that otherwise agree |
 
 ## What a case contains

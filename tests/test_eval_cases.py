@@ -40,8 +40,10 @@ def test_the_suite_has_the_agreed_cases() -> None:
         "omission-claimed-complete",
         "omission-not-claimed",
         "other-host-path",
+        "spelling-and-rounding",
         "stale-status",
         "timeshift-cron-contradiction",
+        "value-in-passing",
     ]
 
 

@@ -41,6 +41,10 @@ clearly contradicts. There are four kinds:
   disabled or broken, and the evidence shows it set up and working, or the
   other way round.
 
+A wrong value stated in passing counts. A time, version, path or count that
+disagrees with a probe or with another line of a document is a claim, even in a
+sentence that is about something else.
+
 ## What not to report
 
 - **History.** Lines that record what used to be true, what changed or when
@@ -60,9 +64,9 @@ clearly contradicts. There are four kinds:
 - **The same fact in different words.** `daily at 04:15` and
   `*-*-* 04:15:00`, `Sun` and `Sundays`, local times written in the host's
   time zone.
-- **Anything else that isn't a wrong claim:** wording, typos, formatting,
-  vague or incomplete descriptions, advice, missing explanations,
-  suggestions for improvement.
+- **Anything else that isn't a wrong claim:** wording, spelling or grammar
+  mistakes, formatting, vague or incomplete descriptions, advice, missing
+  explanations, suggestions for improvement.
 
 When in doubt, leave it out. A report that cries wolf gets ignored. When the
 documents are right, an empty report is the correct answer.

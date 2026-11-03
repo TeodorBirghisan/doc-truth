@@ -1,0 +1,6 @@
+[[must-find]]
+id = "wrong-time-in-passing"
+doc = ["docs/operations.md:43"]
+evidence = ["probe:custom-timers", "docs/operations.md:27", "docs/operations.md:89"]
+confidence = "confirmed"
+note = "A sentence about the morning summary names the health check's time in passing. It says 10:00; the timer and two other lines of the manual say 10:07. The real miss this case comes from sat in a long manual, so the case is long too."
