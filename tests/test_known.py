@@ -28,9 +28,14 @@ from doc_truth.findings import (
     ProbeQuote,
 )
 from doc_truth.known import (
+    REMEMBERED_RUNS,
     AckError,
+    Back,
+    Changes,
     Earlier,
     PreviousReport,
+    Remembered,
+    Returned,
     Tracking,
     acknowledge,
     already_acknowledged,
@@ -42,6 +47,9 @@ from doc_truth.known import (
     identify,
     identity_json,
     known_toml,
+    remembered_from_json,
+    remembered_json,
+    returned_json,
     same_finding,
     track,
 )
@@ -166,8 +174,15 @@ def earlier(found: Finding, *, runs_open: int = 1, acknowledged: bool = False) -
     )
 
 
-def previous(*items: Earlier) -> PreviousReport:
-    return PreviousReport(run="20261026T080000Z", findings=items)
+PREVIOUS_RUN = "20261026T080000Z"
+
+
+def previous(*items: Earlier, remembered: Sequence[Remembered] = ()) -> PreviousReport:
+    return PreviousReport(run=PREVIOUS_RUN, findings=items, remembered=tuple(remembered))
+
+
+def unchanged(item: Earlier) -> Earlier:
+    return replace(item, changes=Changes())
 
 
 def tracking(
@@ -911,7 +926,7 @@ def test_a_finding_that_is_gone_while_its_probe_works_is_no_longer_reported() ->
 
     result = tracking(before=previous(gone))
 
-    assert result.no_longer_reported == (gone,)
+    assert result.no_longer_reported == (unchanged(gone),)
     assert result.not_rechecked == ()
 
 
@@ -1001,7 +1016,7 @@ def test_an_earlier_finding_is_not_lost_when_only_its_acknowledgement_matches_a_
 
     result = tracking(second_line, known=[acknowledgement(both_lines)], before=previous(first_line))
 
-    assert result.no_longer_reported == (first_line,)
+    assert result.no_longer_reported == (unchanged(first_line),)
 
 
 def test_an_acknowledged_finding_that_goes_unchecked_keeps_its_count() -> None:
@@ -1104,7 +1119,9 @@ def test_a_dropped_finding_about_something_else_changes_nothing(unrelated: Findi
     gone = earlier(finding(6))
     dropped = Dropped(finding=unrelated, problems=("doc: no",))
 
-    assert tracking(before=previous(gone), dropped=[dropped]).no_longer_reported == (gone,)
+    assert tracking(before=previous(gone), dropped=[dropped]).no_longer_reported == (
+        unchanged(gone),
+    )
 
 
 def test_a_dropped_cross_doc_finding_about_another_doc_changes_nothing() -> None:
@@ -1114,7 +1131,9 @@ def test_a_dropped_cross_doc_finding_about_another_doc_changes_nothing() -> None
     )
     dropped = Dropped(finding=unrelated, problems=("evidence: no",))
 
-    assert tracking(before=previous(gone), dropped=[dropped]).no_longer_reported == (gone,)
+    assert tracking(before=previous(gone), dropped=[dropped]).no_longer_reported == (
+        unchanged(gone),
+    )
 
 
 def test_a_not_rechecked_acknowledgement_keeps_its_flag() -> None:
@@ -1510,3 +1529,584 @@ def test_a_reason_that_is_not_valid_text_writes_nothing(tmp_path: Path) -> None:
         append_known(path, found)
 
     assert not path.exists()
+
+
+FIXED_OUTPUT = OUTPUT.replace("0 * * * * root timeshift", "0 9-21 * * * root timeshift")
+FIXED_RESULTS = (probe_result("cron-d", stdout=FIXED_OUTPUT), probe_result("timers", stdout=OUTPUT))
+FAILED_RESULTS = (
+    probe_result("cron-d", failure="timed out after 30s", stdout=FIXED_OUTPUT),
+    probe_result("timers", stdout=OUTPUT),
+)
+FIXED_DOCS = (
+    doc_text(
+        OPERATIONS,
+        [line.replace("hourly, 09:00-21:00", "every hour") for line in OPERATIONS_LINES],
+    ),
+    doc_text(APT, APT_LINES),
+)
+EARLIER_RUN = "20261012T080000Z"
+
+
+def remembered(
+    found: Finding,
+    *,
+    runs_open: int = 1,
+    runs_gone: int = 1,
+    doc: bool = False,
+    output: bool = False,
+    unread: bool = False,
+    last_run: str | None = EARLIER_RUN,
+) -> Remembered:
+    return Remembered(
+        id=finding_id(identity(found)),
+        title=found.title,
+        confidence=found.confidence,
+        identity=identity(found),
+        runs_open=runs_open,
+        last_run=last_run,
+        runs_gone=runs_gone,
+        changes=Changes(doc=doc, output=output),
+        unread=unread,
+    )
+
+
+def returning(
+    item: Remembered,
+    *findings: Finding,
+    docs: Sequence[DocText] = DOCS,
+    results: Sequence[ProbeResult] = RESULTS,
+    known: Sequence[Acknowledgement] = (),
+) -> Tracking:
+    return tracking(
+        *(findings or [finding(6)]),
+        before=previous(remembered=[item]),
+        docs=docs,
+        results=results,
+        known=known,
+    )
+
+
+def test_a_gone_finding_whose_line_of_output_changed_says_so() -> None:
+    (item,) = tracking(
+        before=previous(earlier(finding(6))), results=FIXED_RESULTS
+    ).no_longer_reported
+
+    assert item.changes == Changes(output=True)
+
+
+def test_a_gone_finding_whose_doc_line_changed_says_so() -> None:
+    (item,) = tracking(before=previous(earlier(finding(6))), docs=FIXED_DOCS).no_longer_reported
+
+    assert item.changes == Changes(doc=True)
+
+
+def test_a_gone_finding_can_have_changed_on_both_sides() -> None:
+    (item,) = tracking(
+        before=previous(earlier(finding(6))), docs=FIXED_DOCS, results=FIXED_RESULTS
+    ).no_longer_reported
+
+    assert item.changes == Changes(doc=True, output=True)
+
+
+def test_one_changed_line_of_several_cited_is_a_change() -> None:
+    (item,) = tracking(
+        before=previous(earlier(finding(5, end_line=6))), docs=FIXED_DOCS
+    ).no_longer_reported
+
+    assert item.changes == Changes(doc=True)
+
+
+def test_a_gone_cross_doc_finding_changes_when_either_doc_does() -> None:
+    cross_doc = finding(11, kind=Kind.CROSS_DOC_CONTRADICTION, evidence=other_doc(3))
+    other_edited = (DOCS[0], doc_text(APT, ["# Apt", "", "It installs security updates only."]))
+
+    (same,) = tracking(before=previous(earlier(cross_doc))).no_longer_reported
+    (edited,) = tracking(before=previous(earlier(cross_doc)), docs=other_edited).no_longer_reported
+
+    assert same.changes == Changes()
+    assert edited.changes == Changes(doc=True)
+
+
+def test_output_printed_by_another_probe_does_not_hide_a_change() -> None:
+    elsewhere = (probe_result("cron-d", stdout=FIXED_OUTPUT), probe_result("timers", stdout=OUTPUT))
+
+    (item,) = tracking(before=previous(earlier(finding(6))), results=elsewhere).no_longer_reported
+
+    assert item.changes == Changes(output=True)
+
+
+def test_a_finding_that_was_not_rechecked_has_no_reading_of_what_changed() -> None:
+    (item,) = tracking(before=previous(earlier(finding(6))), results=FAILED_RESULTS).not_rechecked
+
+    assert item.changes is None
+
+
+def test_nothing_is_remembered_without_an_earlier_run() -> None:
+    assert tracking(finding(6)).remembered == ()
+
+
+def test_a_finding_no_longer_reported_is_remembered() -> None:
+    gone = replace(earlier(finding(6), runs_open=3), last_run=PREVIOUS_RUN)
+
+    result = tracking(before=previous(gone), results=FIXED_RESULTS)
+
+    assert result.remembered == (
+        remembered(finding(6), runs_open=3, runs_gone=1, output=True, last_run=PREVIOUS_RUN),
+    )
+
+
+@pytest.mark.parametrize("last_run", [EARLIER_RUN, None], ids=["an older run", "unknown"])
+def test_a_finding_that_went_unchecked_before_it_went_away_has_a_gap_nobody_read(
+    last_run: str | None,
+) -> None:
+    waiting = replace(earlier(finding(6)), last_run=last_run)
+
+    (item,) = tracking(before=previous(waiting)).remembered
+
+    assert item.unread
+    assert item.last_run == last_run
+
+
+def test_a_finding_reported_again_with_quotes_that_fail_was_not_missed_that_run() -> None:
+    dropped = Dropped(finding=finding(6), problems=("doc: no",))
+
+    (item,) = tracking(
+        before=previous(remembered=[remembered(finding(6))]), dropped=[dropped]
+    ).remembered
+
+    assert item.unread
+
+
+def test_a_finding_that_was_not_rechecked_is_not_remembered() -> None:
+    result = tracking(before=previous(earlier(finding(6))), results=FAILED_RESULTS)
+
+    assert result.remembered == ()
+
+
+def test_a_finding_still_reported_is_not_remembered() -> None:
+    assert tracking(finding(6), before=previous(earlier(finding(6)))).remembered == ()
+
+
+def test_a_remembered_finding_that_stays_away_counts_another_run() -> None:
+    item = remembered(finding(6), runs_gone=2)
+
+    assert tracking(before=previous(remembered=[item])).remembered == (replace(item, runs_gone=3),)
+
+
+def test_a_change_seen_while_a_finding_is_away_is_kept_through_later_runs() -> None:
+    seen = remembered(finding(6), doc=True)
+
+    (after_output,) = tracking(before=previous(remembered=[seen]), results=FIXED_RESULTS).remembered
+    (after_nothing,) = tracking(before=previous(remembered=[seen])).remembered
+
+    assert after_output.changes == Changes(doc=True, output=True)
+    assert after_nothing.changes == Changes(doc=True)
+
+
+@pytest.mark.parametrize(
+    ("docs", "results"),
+    [(DOCS, FAILED_RESULTS), (DOCS, RESULTS[1:]), (DOCS[1:], RESULTS)],
+    ids=["failed probe", "probe left the config", "doc left the config"],
+)
+def test_a_run_that_cannot_read_what_a_remembered_finding_cites_is_marked(
+    docs: Sequence[DocText], results: Sequence[ProbeResult]
+) -> None:
+    (item,) = tracking(
+        before=previous(remembered=[remembered(finding(6))]), docs=docs, results=results
+    ).remembered
+
+    assert item.unread
+    assert item.changes == Changes()
+
+
+def test_a_run_that_could_not_read_stays_marked() -> None:
+    (item,) = tracking(before=previous(remembered=[remembered(finding(6), unread=True)])).remembered
+
+    assert item.unread
+
+
+def test_a_remembered_finding_is_forgotten_after_the_last_run_it_is_kept_for() -> None:
+    last = remembered(finding(6), runs_gone=REMEMBERED_RUNS - 1)
+    over = remembered(finding(6), runs_gone=REMEMBERED_RUNS)
+
+    (kept,) = tracking(before=previous(remembered=[last])).remembered
+
+    assert kept.runs_gone == REMEMBERED_RUNS
+    assert tracking(before=previous(remembered=[over])).remembered == ()
+
+
+def test_a_finding_back_after_its_line_of_output_changed_came_back() -> None:
+    result = returning(remembered(finding(6), runs_open=4, runs_gone=2, output=True))
+
+    (item,) = result.findings
+    assert item.returned == Returned(
+        back=Back.AFTER_CHANGE,
+        last_run=EARLIER_RUN,
+        runs_gone=2,
+        changes=Changes(output=True),
+    )
+    assert item.runs_open == 1
+    assert result.remembered == ()
+
+
+def test_a_finding_back_after_its_doc_line_changed_came_back() -> None:
+    (item,) = returning(remembered(finding(6), doc=True)).findings
+
+    assert item.returned is not None
+    assert (item.returned.back, item.returned.changes) == (Back.AFTER_CHANGE, Changes(doc=True))
+
+
+def test_a_finding_back_with_nothing_changed_was_missed_and_keeps_counting() -> None:
+    (item,) = returning(remembered(finding(6), runs_open=4, runs_gone=2)).findings
+
+    assert item.returned is not None
+    assert item.returned.back is Back.MISSED
+    assert item.runs_open == 4 + 2 + 1
+
+
+@pytest.mark.parametrize("omission", ["before", "now", "both"])
+def test_an_omission_back_with_nothing_changed_is_not_called_missed(omission: str) -> None:
+    before = finding(3, kind=Kind.OMISSION if omission != "now" else Kind.CONTRADICTION)
+    now = finding(3, kind=Kind.OMISSION if omission != "before" else Kind.CONTRADICTION)
+
+    (item,) = returning(remembered(before, runs_open=4), now).findings
+
+    assert item.returned is not None
+    assert item.returned.back is Back.REPORTED_BEFORE
+    assert item.runs_open == 1
+
+
+def test_an_omission_back_after_a_change_came_back() -> None:
+    omission = finding(3, kind=Kind.OMISSION)
+
+    (item,) = returning(remembered(omission, output=True), omission).findings
+
+    assert item.returned is not None
+    assert item.returned.back is Back.AFTER_CHANGE
+
+
+def test_a_gap_that_could_not_be_read_is_not_called_missed() -> None:
+    (item,) = returning(remembered(finding(6), runs_open=4, unread=True)).findings
+
+    assert item.returned is not None
+    assert item.returned.back is Back.REPORTED_BEFORE
+    assert item.runs_open == 1
+
+
+def test_a_change_seen_in_a_gap_counts_even_if_another_run_could_not_read() -> None:
+    (item,) = returning(remembered(finding(6), output=True, unread=True)).findings
+
+    assert item.returned is not None
+    assert item.returned.back is Back.AFTER_CHANGE
+
+
+def test_a_finding_on_the_same_doc_line_with_other_output_is_new() -> None:
+    before = remembered(finding(6), output=True)
+    other_value = finding(6, evidence=ProbeQuote(probe="cron-d", quote="0 9-21 * * * root"))
+
+    result = returning(before, other_value, results=FIXED_RESULTS)
+
+    (item,) = result.findings
+    assert item.returned is None
+    assert item.id == finding_id(identity(other_value, results=FIXED_RESULTS))
+    assert [kept.id for kept in result.remembered] == [before.id]
+
+
+def test_another_problem_on_the_line_of_a_long_gone_acknowledgement_is_new() -> None:
+    known = acknowledgement(finding(6))
+    long_gone = replace(remembered(finding(6)), id=known.id, runs_gone=30)
+    another = finding(6, evidence=RESTIC)
+
+    result = returning(long_gone, another, known=[known])
+
+    (item,) = result.findings
+    assert (item.returned, item.acknowledgement, item.runs_open) == (None, None, 1)
+    assert item.id == finding_id(identity(another))
+    assert [kept.runs_gone for kept in result.remembered] == [31]
+
+
+def test_an_exact_match_in_memory_wins_over_an_open_finding_that_only_shares_a_line() -> None:
+    wide = finding(5, end_line=6)
+    narrow = finding(6, evidence=RESTIC)
+    before = PreviousReport(
+        run=PREVIOUS_RUN,
+        findings=(earlier(narrow, runs_open=2),),
+        remembered=(remembered(wide, runs_open=7),),
+    )
+
+    result = tracking(wide, before=before)
+
+    (item,) = result.findings
+    assert item.id == finding_id(identity(wide))
+    assert item.returned is not None
+    assert item.runs_open == 7 + 1 + 1
+    assert [gone.id for gone in result.no_longer_reported] == [finding_id(identity(narrow))]
+
+
+def test_a_gone_acknowledgement_keeps_its_memory_through_a_run_that_could_not_check_it() -> None:
+    known = acknowledgement(finding(6))
+    long_gone = replace(remembered(finding(6), output=True), runs_gone=REMEMBERED_RUNS + 3)
+
+    result = tracking(
+        known=[known], before=previous(remembered=[long_gone]), results=FAILED_RESULTS
+    )
+
+    assert [item.id for item in result.not_rechecked] == [known.id]
+    (item,) = result.remembered
+    assert (item.runs_gone, item.changes, item.unread) == (
+        REMEMBERED_RUNS + 4,
+        Changes(output=True),
+        True,
+    )
+
+
+def test_an_acknowledgement_never_seen_reported_has_a_past_nobody_read() -> None:
+    (item,) = tracking(known=[acknowledgement(finding(6))]).remembered
+
+    assert (item.last_run, item.unread) == (None, True)
+
+
+def test_a_gone_acknowledgement_keeps_its_past_after_the_finding_left_the_last_run() -> None:
+    known = acknowledgement(finding(6))
+    away = replace(remembered(finding(6), runs_open=4, runs_gone=2), last_run=EARLIER_RUN)
+
+    (item,) = tracking(known=[known], before=previous(remembered=[away])).no_longer_reported
+
+    assert (item.id, item.last_run, item.runs_open) == (known.id, EARLIER_RUN, 4)
+
+
+def test_a_finding_whose_doc_line_now_reads_differently_did_not_come_back() -> None:
+    before = remembered(finding(5, end_line=6), doc=True)
+
+    (item,) = returning(before, finding(5), docs=FIXED_DOCS).findings
+
+    assert item.returned is not None
+    assert item.returned.back is Back.REPORTED_BEFORE
+
+
+def test_a_returning_finding_keeps_its_id_whatever_the_model_quotes() -> None:
+    before = remembered(finding(5, end_line=6))
+    requoted = finding(6, quote="hourly", evidence=ProbeQuote(probe="cron-d", quote="timeshift"))
+    assert finding_id(identity(requoted)) != before.id
+
+    (item,) = returning(before, requoted).findings
+
+    assert item.id == before.id
+
+
+def test_two_findings_do_not_both_return_as_one_remembered_finding() -> None:
+    before = remembered(finding(6))
+
+    first, second = returning(before, finding(6), finding(6, evidence=RESTIC)).findings
+
+    assert first.returned is not None
+    assert second.returned is None
+    assert first.id != second.id
+
+
+def test_a_finding_in_the_previous_run_is_open_not_returning() -> None:
+    before = PreviousReport(
+        run="20261026T080000Z",
+        findings=(earlier(finding(6), runs_open=2),),
+        remembered=(remembered(finding(6), output=True),),
+    )
+
+    result = tracking(finding(6), before=before)
+
+    (item,) = result.findings
+    assert item.returned is None
+    assert item.runs_open == 3
+    assert result.remembered == ()
+
+
+def test_a_remembered_finding_is_forgotten_once_an_open_one_matches_it() -> None:
+    before = PreviousReport(
+        run="20261026T080000Z",
+        findings=(earlier(finding(6)), earlier(finding(11, evidence=RESTIC))),
+        remembered=(remembered(finding(6)), remembered(finding(8, evidence=RESTIC))),
+    )
+
+    result = tracking(finding(6), finding(11, evidence=RESTIC), before=before)
+
+    assert [item.id for item in result.remembered] == [
+        finding_id(identity(finding(8, evidence=RESTIC)))
+    ]
+
+
+def test_a_returning_finding_does_not_take_an_id_already_in_use() -> None:
+    open_before = earlier(finding(6))
+    before = PreviousReport(
+        run="20261026T080000Z",
+        findings=(open_before,),
+        remembered=(replace(remembered(finding(8, evidence=RESTIC)), id=open_before.id),),
+    )
+
+    still_open, back = tracking(finding(6), finding(8, evidence=RESTIC), before=before).findings
+
+    assert still_open.id == open_before.id
+    assert back.id == finding_id(identity(finding(8, evidence=RESTIC)))
+    assert back.returned is not None
+
+
+def test_a_gone_acknowledged_finding_is_remembered_once_however_long_it_is_listed() -> None:
+    known = acknowledgement(finding(6))
+
+    first = tracking(known=[known], results=FIXED_RESULTS)
+    second = tracking(known=[known], before=previous(remembered=first.remembered))
+
+    (item,) = second.remembered
+    assert (item.id, item.runs_gone, item.changes) == (known.id, 2, Changes(output=True))
+
+
+def test_a_gone_acknowledged_finding_is_remembered_for_as_long_as_it_is_listed() -> None:
+    known = acknowledgement(finding(6))
+    listed = replace(remembered(finding(6), output=True), runs_gone=REMEMBERED_RUNS)
+
+    (item,) = tracking(known=[known], before=previous(remembered=[listed])).remembered
+
+    assert (item.runs_gone, item.changes) == (REMEMBERED_RUNS + 1, Changes(output=True))
+
+
+def test_an_acknowledged_finding_that_came_back_stays_acknowledged() -> None:
+    known = acknowledgement(finding(6))
+
+    result = returning(remembered(finding(6), output=True), known=[known])
+
+    (item,) = result.findings
+    assert item.acknowledgement == known
+    assert item.id == known.id
+    assert item.returned is not None
+    assert item.returned.back is Back.AFTER_CHANGE
+    assert result.remembered == ()
+
+
+def test_a_gone_acknowledgement_takes_the_last_run_from_its_own_finding() -> None:
+    known = acknowledgement(finding(6))
+    own = replace(earlier(finding(6)), last_run=EARLIER_RUN)
+    another = replace(earlier(finding(11, evidence=RESTIC)), last_run="20260101T000000Z")
+
+    with_own = tracking(known=[known], before=previous(another, own)).no_longer_reported
+    without = tracking(known=[known], before=previous(another)).no_longer_reported
+
+    assert [item.last_run for item in with_own if item.from_known] == [EARLIER_RUN]
+    assert [item.last_run for item in without if item.from_known] == [None]
+
+
+def test_a_remembered_finding_survives_the_json_report() -> None:
+    items = [
+        remembered(finding(6), runs_open=3, runs_gone=5, doc=True, unread=True),
+        remembered(finding(3, kind=Kind.OMISSION), output=True, last_run=None),
+        remembered(finding(11, kind=Kind.CROSS_DOC_CONTRADICTION, evidence=other_doc(3))),
+    ]
+
+    for item in items:
+        assert remembered_from_json(json.loads(json.dumps(remembered_json(item)))) == item
+
+
+def test_a_remembered_finding_in_json() -> None:
+    item = remembered(finding(6), runs_open=3, runs_gone=5, doc=True, unread=True)
+
+    assert remembered_json(item) == {
+        "id": item.id,
+        "title": "A title",
+        "confidence": "confirmed",
+        "runs_open": 3,
+        "last_run": EARLIER_RUN,
+        "runs_gone": 5,
+        "changed": {"doc": True, "output": False},
+        "unread": True,
+        "identity": identity_json(item.identity),
+    }
+
+
+def test_a_returned_finding_in_json() -> None:
+    returned = Returned(back=Back.MISSED, last_run=None, runs_gone=2, changes=Changes(output=True))
+
+    assert returned_json(returned) == {
+        "state": "missed",
+        "last_run": None,
+        "runs_gone": 2,
+        "changed": {"doc": False, "output": True},
+    }
+
+
+def test_an_earlier_finding_says_in_json_when_it_was_last_reported_and_what_changed() -> None:
+    item = replace(earlier(finding(6)), last_run=EARLIER_RUN, changes=Changes(doc=True))
+
+    data = earlier_json(item)
+
+    assert data["last_run"] == EARLIER_RUN
+    assert data["changed"] == {"doc": True, "output": False}
+    assert earlier_from_json(json.loads(json.dumps(data))) == item
+    assert earlier_json(earlier(finding(6)))["changed"] is None
+
+
+def test_an_earlier_finding_from_an_older_report_has_no_last_run() -> None:
+    data = earlier_json(earlier(finding(6)))
+    del data["last_run"], data["changed"]
+
+    assert earlier_from_json(data) == earlier(finding(6))
+
+
+VALID_REMEMBERED = remembered_json(remembered(finding(6)))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"id": 1},
+        {"title": None},
+        {"confidence": "typo"},
+        {"runs_open": "1"},
+        {"runs_open": -1},
+        {"runs_gone": True},
+        {"runs_gone": 1.5},
+        {"last_run": 5},
+        {"changed": None},
+        {"changed": {"doc": True}},
+        {"changed": {"doc": "yes", "output": False}},
+        {"changed": {"doc": False, "output": 1}},
+        {"unread": "no"},
+        {"identity": 1},
+    ],
+)
+def test_a_malformed_remembered_finding_is_an_error(change: dict[str, object]) -> None:
+    with pytest.raises((ValueError, KeyError)):
+        remembered_from_json({**VALID_REMEMBERED, **change})
+
+
+def test_a_remembered_finding_from_an_unknown_run_loads_without_one() -> None:
+    entry = {key: value for key, value in VALID_REMEMBERED.items() if key != "last_run"}
+
+    assert remembered_from_json(entry).last_run is None
+
+
+@pytest.mark.parametrize("missing", sorted(set(VALID_REMEMBERED) - {"last_run"}))
+def test_a_remembered_finding_needs_every_other_field(missing: str) -> None:
+    entry = {key: value for key, value in VALID_REMEMBERED.items() if key != missing}
+
+    with pytest.raises((ValueError, KeyError)):
+        remembered_from_json(entry)
+
+
+@pytest.mark.parametrize("changed", [1, {"doc": True}, {"doc": 1, "output": False}])
+def test_a_malformed_reading_of_what_changed_is_an_error(changed: object) -> None:
+    with pytest.raises((ValueError, KeyError)):
+        earlier_from_json({**earlier_json(earlier(finding(6))), "changed": changed})
+
+
+@pytest.mark.parametrize("runs_open", [True, -1, 1.0])
+def test_a_run_count_that_is_not_a_count_is_an_error(runs_open: object) -> None:
+    with pytest.raises(ValueError):
+        earlier_from_json({**earlier_json(earlier(finding(6))), "runs_open": runs_open})
+
+
+def test_a_last_run_that_is_not_a_name_is_an_error() -> None:
+    with pytest.raises(ValueError):
+        earlier_from_json({**earlier_json(earlier(finding(6))), "last_run": 7})
+
+
+def test_a_remembered_acknowledgement_that_was_never_open_loads() -> None:
+    entry = {**VALID_REMEMBERED, "runs_open": 0}
+
+    assert remembered_from_json(entry).runs_open == 0

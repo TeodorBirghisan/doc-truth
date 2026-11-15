@@ -1,10 +1,12 @@
+import enum
 import hashlib
 import json
 import operator
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
+from typing import Protocol, TypeIs
 
 from doc_truth.config import Acknowledgement
 from doc_truth.evidence import ProbeResult
@@ -29,8 +31,29 @@ _KNOWN_HEADER = (
 )
 
 
+REMEMBERED_RUNS = 8
+
+
 class AckError(Exception):
     pass
+
+
+class Back(enum.Enum):
+    AFTER_CHANGE = "after_change"
+    MISSED = "missed"
+    REPORTED_BEFORE = "reported_before"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Changes:
+    doc: bool = False
+    output: bool = False
+
+    def __bool__(self) -> bool:
+        return self.doc or self.output
+
+    def __or__(self, other: Changes) -> Changes:
+        return Changes(doc=self.doc or other.doc, output=self.output or other.output)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -43,6 +66,29 @@ class Earlier:
     acknowledged: bool = False
     from_known: bool = False
     left_config: bool = False
+    last_run: str | None = None
+    changes: Changes | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Remembered:
+    id: str
+    title: str
+    confidence: Confidence
+    identity: Identity
+    runs_open: int
+    last_run: str | None
+    runs_gone: int
+    changes: Changes
+    unread: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Returned:
+    back: Back
+    last_run: str | None
+    runs_gone: int
+    changes: Changes
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -50,6 +96,7 @@ class PreviousReport:
     run: str
     findings: tuple[Earlier, ...]
     no_longer_reported: tuple[Earlier, ...] = ()
+    remembered: tuple[Remembered, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -60,6 +107,7 @@ class Tracked:
     runs_open: int = 1
     acknowledgement: Acknowledgement | None = None
     note: str | None = None
+    returned: Returned | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -67,6 +115,15 @@ class Tracking:
     findings: tuple[Tracked, ...]
     no_longer_reported: tuple[Earlier, ...]
     not_rechecked: tuple[Earlier, ...]
+    remembered: tuple[Remembered, ...] = ()
+
+
+class _Identified(Protocol):
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def identity(self) -> Identity: ...
 
 
 def identify(finding: Finding, docs: Sequence[DocText], results: Sequence[ProbeResult]) -> Identity:
@@ -122,9 +179,10 @@ def track(
     today: date,
 ) -> Tracking:
     earlier = () if previous is None else previous.findings
+    remembered = () if previous is None else previous.remembered
     run = _Run(docs, results, dropped)
     identities = [identify(finding, docs, results) for finding in findings]
-    pairs, unpaired = _paired(identities, earlier)
+    pairs, unpaired, returns, still_gone = _paired(identities, earlier, remembered)
     states = [
         _acknowledgement_state(finding, identity, known, run, today)
         for finding, identity in zip(findings, identities, strict=True)
@@ -136,33 +194,61 @@ def track(
         zip(findings, identities, states, strict=True)
     ):
         before = pairs.get(position)
+        came = returns.get(position)
+        returned = None if came is None else _returned(came, identity, run)
+        seen_before = before or came
         if acknowledgement is not None:
             id_ = acknowledgement.id
-        elif before is not None and before.id not in taken:
-            id_ = before.id
+        elif seen_before is not None and seen_before.id not in taken:
+            id_ = seen_before.id
         else:
             id_ = finding_id(identity)
         taken.add(id_)
+        if before is not None:
+            runs_open = before.runs_open + 1
+        elif came is not None and returned is not None and returned.back is Back.MISSED:
+            runs_open = came.runs_open + came.runs_gone + 1
+        else:
+            runs_open = 1
         tracked.append(
             Tracked(
                 id=id_,
                 finding=finding,
                 identity=identity,
-                runs_open=1 if before is None else before.runs_open + 1,
+                runs_open=runs_open,
                 acknowledgement=acknowledgement,
                 note=note,
+                returned=returned,
             )
         )
-    gone = _gone(identities, unpaired, known, today)
+    gone = _gone(identities, unpaired, still_gone, known, today)
+    no_longer_reported = tuple(
+        replace(item, changes=run.changes(item.identity))
+        for item in gone
+        if run.includes(item.identity)
+    )
     return Tracking(
         findings=tuple(tracked),
-        no_longer_reported=tuple(item for item in gone if run.includes(item.identity)),
+        no_longer_reported=no_longer_reported,
         not_rechecked=tuple(
             replace(item, left_config=run.left_config(item.identity))
             for item in gone
             if not run.includes(item.identity)
         ),
+        remembered=_remember(
+            still_gone,
+            no_longer_reported,
+            current=identities,
+            run=run,
+            known=known,
+            previous_run=None if previous is None else previous.run,
+        ),
     )
+
+
+def unchanged_means_missed(identity: Identity) -> bool:
+    # An omission is fixed by adding a line, which changes none of the lines it cites.
+    return identity.kind is not Kind.OMISSION
 
 
 def already_acknowledged(finding: Earlier, known: Iterable[Acknowledgement], today: date) -> bool:
@@ -201,6 +287,8 @@ def earlier_json(item: Earlier) -> dict[str, object]:
         "runs_open": item.runs_open,
         "acknowledged": item.acknowledged,
         "left_config": item.left_config,
+        "last_run": item.last_run,
+        "changed": None if item.changes is None else changes_json(item.changes),
         "identity": identity_json(item.identity),
     }
 
@@ -209,16 +297,65 @@ def earlier_from_json(entry: Mapping[str, object]) -> Earlier:
     id_ = entry["id"]
     title = entry["title"]
     runs_open = entry["runs_open"]
-    if not isinstance(id_, str) or not isinstance(title, str) or not isinstance(runs_open, int):
+    if not isinstance(id_, str) or not isinstance(title, str) or not _is_count(runs_open):
         raise ValueError("a finding has the wrong types")
+    changed = entry.get("changed")
     return Earlier(
         id=id_,
         title=title,
         confidence=Confidence(str(entry["confidence"])),
         runs_open=runs_open,
         acknowledged=entry.get("acknowledged") is True,
+        last_run=_run_from_json(entry.get("last_run")),
+        changes=None if changed is None else _changes_from_json(changed),
         identity=_identity_from_json(entry["identity"]),
     )
+
+
+def remembered_json(item: Remembered) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "title": item.title,
+        "confidence": item.confidence.value,
+        "runs_open": item.runs_open,
+        "last_run": item.last_run,
+        "runs_gone": item.runs_gone,
+        "changed": changes_json(item.changes),
+        "unread": item.unread,
+        "identity": identity_json(item.identity),
+    }
+
+
+def remembered_from_json(entry: Mapping[str, object]) -> Remembered:
+    listed = earlier_from_json(entry)
+    runs_gone = entry["runs_gone"]
+    unread = entry["unread"]
+    if not _is_count(runs_gone) or not isinstance(unread, bool) or listed.changes is None:
+        raise ValueError("a remembered finding has the wrong types")
+    return Remembered(
+        id=listed.id,
+        title=listed.title,
+        confidence=listed.confidence,
+        runs_open=listed.runs_open,
+        last_run=listed.last_run,
+        runs_gone=runs_gone,
+        changes=listed.changes,
+        unread=unread,
+        identity=listed.identity,
+    )
+
+
+def returned_json(returned: Returned) -> dict[str, object]:
+    return {
+        "state": returned.back.value,
+        "last_run": returned.last_run,
+        "runs_gone": returned.runs_gone,
+        "changed": changes_json(returned.changes),
+    }
+
+
+def changes_json(changes: Changes) -> dict[str, object]:
+    return {"doc": changes.doc, "output": changes.output}
 
 
 def acknowledge(
@@ -314,14 +451,34 @@ class _Run:
             and not any(_cites_same_sources(finding, identity) for finding in self._dropped)
         )
 
+    def changes(self, identity: Identity) -> Changes:
+        evidence = identity.evidence
+        return Changes(
+            doc=any(
+                item.file in self._doc_lines and not item.lines <= self._doc_lines[item.file]
+                for item in _cited_in_docs(identity)
+            ),
+            output=isinstance(evidence, ProbeOutput)
+            and evidence.probe in self._printed
+            and evidence.probe not in self._failed
+            and not evidence.lines <= self._printed[evidence.probe],
+        )
+
     def still_there(self, identity: Identity) -> bool:
         evidence = identity.evidence
-        cited = [identity.doc, evidence] if isinstance(evidence, CitedLines) else [identity.doc]
-        if not all(item.lines <= self._doc_lines.get(item.file, frozenset()) for item in cited):
+        if not all(
+            item.lines <= self._doc_lines.get(item.file, frozenset())
+            for item in _cited_in_docs(identity)
+        ):
             return False
         return not isinstance(evidence, ProbeOutput) or evidence.lines <= self._printed.get(
             evidence.probe, frozenset()
         )
+
+
+def _cited_in_docs(identity: Identity) -> list[CitedLines]:
+    evidence = identity.evidence
+    return [identity.doc, evidence] if isinstance(evidence, CitedLines) else [identity.doc]
 
 
 def _cites_same_sources(finding: Finding, identity: Identity) -> bool:
@@ -334,19 +491,93 @@ def _cites_same_sources(finding: Finding, identity: Identity) -> bool:
 
 
 def _paired(
-    current: Sequence[Identity], earlier: Sequence[Earlier]
-) -> tuple[dict[int, Earlier], list[Earlier]]:
+    current: Sequence[Identity], earlier: Sequence[Earlier], remembered: Sequence[Remembered]
+) -> tuple[dict[int, Earlier], list[Earlier], dict[int, Remembered], list[Remembered]]:
     pairs: dict[int, Earlier] = {}
-    unpaired = list(earlier)
+    returns: dict[int, Remembered] = {}
+    unpaired, still_gone = list(earlier), list(remembered)
     # Strongest match first, so a finding keeps its own past when the model reorders its answer.
     for matches in (operator.eq, covers, same_finding):
-        for position, identity in enumerate(current):
-            if position not in pairs:
-                match = next((item for item in unpaired if matches(item.identity, identity)), None)
-                if match is not None:
-                    pairs[position] = match
-                    unpaired.remove(match)
-    return pairs, unpaired
+        _pair(current, unpaired, pairs, returns, matches)
+        # Sharing a doc line is too little to say that a finding from runs ago is this one.
+        if matches is not same_finding:
+            _pair(current, still_gone, returns, pairs, matches)
+    return pairs, unpaired, returns, still_gone
+
+
+def _pair[T: _Identified](
+    current: Sequence[Identity],
+    candidates: list[T],
+    pairs: dict[int, T],
+    paired_elsewhere: Collection[int],
+    matches: Callable[[Identity, Identity], bool],
+) -> None:
+    for position, identity in enumerate(current):
+        if position not in pairs and position not in paired_elsewhere:
+            match = next((item for item in candidates if matches(item.identity, identity)), None)
+            if match is not None:
+                pairs[position] = match
+                candidates.remove(match)
+
+
+def _returned(came: Remembered, identity: Identity, run: _Run) -> Returned:
+    if not run.still_there(came.identity):
+        back = Back.REPORTED_BEFORE
+    elif came.changes:
+        back = Back.AFTER_CHANGE
+    elif came.unread or not (
+        unchanged_means_missed(came.identity) and unchanged_means_missed(identity)
+    ):
+        back = Back.REPORTED_BEFORE
+    else:
+        back = Back.MISSED
+    return Returned(
+        back=back, last_run=came.last_run, runs_gone=came.runs_gone, changes=came.changes
+    )
+
+
+def _remember(
+    still_gone: Sequence[Remembered],
+    no_longer_reported: Sequence[Earlier],
+    *,
+    current: Sequence[Identity],
+    run: _Run,
+    known: Sequence[Acknowledgement],
+    previous_run: str | None,
+) -> tuple[Remembered, ...]:
+    # The report lists a gone acknowledgement until its entry is deleted, so it is kept as long.
+    acknowledged = {ack.identity for ack in known}
+    kept = [
+        replace(
+            item,
+            runs_gone=item.runs_gone + 1,
+            changes=item.changes | run.changes(item.identity),
+            unread=item.unread or not run.includes(item.identity),
+        )
+        for item in still_gone
+        if (item.runs_gone < REMEMBERED_RUNS or item.identity in acknowledged)
+        and not any(covers(item.identity, identity) for identity in current)
+    ]
+    remembered = {item.identity for item in kept}
+    return (
+        *kept,
+        *(
+            Remembered(
+                id=item.id,
+                title=item.title,
+                confidence=item.confidence,
+                identity=item.identity,
+                runs_open=item.runs_open,
+                last_run=item.last_run,
+                runs_gone=1,
+                changes=item.changes or Changes(),
+                # Reported in an older run means the runs since couldn't check it.
+                unread=item.last_run is None or item.last_run != previous_run,
+            )
+            for item in no_longer_reported
+            if item.identity not in remembered
+        ),
+    )
 
 
 def _acknowledgement_state(
@@ -396,6 +627,7 @@ def _reaches(ack: Acknowledgement, confidence: Confidence) -> bool:
 def _gone(
     current: Sequence[Identity],
     unpaired: Sequence[Earlier],
+    still_gone: Sequence[Remembered],
     known: Sequence[Acknowledgement],
     today: date,
 ) -> list[Earlier]:
@@ -404,20 +636,16 @@ def _gone(
         if not any(same_finding(ack.identity, identity) for identity in current) and not any(
             covers(listed.identity, ack.identity) for listed in from_known
         ):
+            past: Sequence[Earlier | Remembered] = (*unpaired, *still_gone)
+            own = [item for item in past if covers(ack.identity, item.identity)]
             from_known.append(
                 Earlier(
                     id=ack.id,
                     title=ack.title,
                     confidence=ack.confidence,
                     identity=ack.identity,
-                    runs_open=max(
-                        (
-                            item.runs_open
-                            for item in unpaired
-                            if covers(ack.identity, item.identity)
-                        ),
-                        default=0,
-                    ),
+                    runs_open=max((item.runs_open for item in own), default=0),
+                    last_run=next((item.last_run for item in own), None),
                     acknowledged=_is_live(ack, today),
                     from_known=True,
                 )
@@ -484,6 +712,25 @@ def _identity_from_json(value: object) -> Identity:
             else _cited_from_json(evidence)
         ),
     )
+
+
+def _changes_from_json(value: object) -> Changes:
+    if not isinstance(value, dict):
+        raise ValueError("what changed must be an object")
+    doc, output = value["doc"], value["output"]
+    if not isinstance(doc, bool) or not isinstance(output, bool):
+        raise ValueError("what changed must be true or false")
+    return Changes(doc=doc, output=output)
+
+
+def _run_from_json(value: object) -> str | None:
+    if value is not None and not isinstance(value, str):
+        raise ValueError("a run must be a name or null")
+    return value
+
+
+def _is_count(value: object) -> TypeIs[int]:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _cited_from_json(value: object) -> CitedLines:

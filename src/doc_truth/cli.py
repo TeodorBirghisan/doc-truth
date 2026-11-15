@@ -227,6 +227,7 @@ def _check(args: argparse.Namespace) -> int:
         previous_run=None if previous is None else previous.run,
         no_longer_reported=tracking.no_longer_reported,
         not_rechecked=tracking.not_rechecked,
+        remembered=tracking.remembered,
     )
     write_report(report, run)
     print(summary(report), file=sys.stderr)

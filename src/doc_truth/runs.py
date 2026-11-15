@@ -3,12 +3,19 @@ import json
 import os
 import shutil
 import tempfile
+from dataclasses import replace
 from datetime import UTC
 from pathlib import Path
 
 from doc_truth.config import Config
 from doc_truth.evidence import Evidence, evidence_json, evidence_markdown
-from doc_truth.known import Earlier, PreviousReport, earlier_from_json
+from doc_truth.known import (
+    Earlier,
+    PreviousReport,
+    Remembered,
+    earlier_from_json,
+    remembered_from_json,
+)
 from doc_truth.report import REPORT_FORMAT, Report, report_json, report_markdown
 
 DEFAULT_OUTPUT_DIR_NAME = ".doc-truth"
@@ -18,6 +25,7 @@ EVIDENCE_MARKDOWN = "evidence.md"
 REPORT_JSON = "report.json"
 REPORT_MARKDOWN = "report.md"
 
+_READABLE_REPORT_FORMATS = (2, REPORT_FORMAT)
 _GITIGNORE = "# Created by doc-truth. Run folders can contain sensitive probe output.\n*\n"
 
 
@@ -62,12 +70,19 @@ def latest_report(runs: Path, config: Config) -> PreviousReport | None:
         written_for = data.get("config")
         if not isinstance(written_for, str) or os.path.realpath(written_for) != config_path:
             continue
-        if data.get("format") != REPORT_FORMAT:
+        if data.get("format") not in _READABLE_REPORT_FORMATS:
             return None
         return PreviousReport(
             run=folder.name,
-            findings=_earlier_findings(data, path, "findings", "not_rechecked"),
+            findings=(
+                *(
+                    replace(item, last_run=folder.name)
+                    for item in _earlier_findings(data, path, "findings")
+                ),
+                *_earlier_findings(data, path, "not_rechecked"),
+            ),
             no_longer_reported=_earlier_findings(data, path, "no_longer_reported"),
+            remembered=_remembered(data, path),
         )
     return None
 
@@ -86,14 +101,20 @@ def _read_report(path: Path) -> dict[str, object] | None:
     return data
 
 
-def _earlier_findings(data: dict[str, object], path: Path, *keys: str) -> tuple[Earlier, ...]:
+def _earlier_findings(data: dict[str, object], path: Path, key: str) -> tuple[Earlier, ...]:
     try:
         return tuple(
             earlier_from_json(entry)
-            for key in keys
             for entry in _entries(data[key])
             if entry.get("left_config") is not True
         )
+    except KeyError, TypeError, ValueError:
+        raise RunsError(f"cannot read {path}: its findings aren't in the expected form") from None
+
+
+def _remembered(data: dict[str, object], path: Path) -> tuple[Remembered, ...]:
+    try:
+        return tuple(remembered_from_json(entry) for entry in _entries(data.get("remembered", [])))
     except KeyError, TypeError, ValueError:
         raise RunsError(f"cannot read {path}: its findings aren't in the expected form") from None
 

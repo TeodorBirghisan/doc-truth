@@ -51,7 +51,7 @@ from doc_truth.findings import (
     ProbeOutput,
     ProbeQuote,
 )
-from doc_truth.known import Tracked, finding_id
+from doc_truth.known import REMEMBERED_RUNS, Tracked, finding_id
 from doc_truth.model import PROMPT_TOO_LONG, Answer, ModelError, ask_claude
 from doc_truth.prompt import PROMPT_VERSION, Prompt
 from doc_truth.report import Report, report_markdown
@@ -416,3 +416,14 @@ def test_troubleshooting_quotes_a_probe_timeout() -> None:
 
     assert f"`{message}`" in troubleshooting()
     assert f"`{FAILED_LABEL}`" in troubleshooting()
+
+
+def test_the_readme_says_how_long_a_finding_is_remembered() -> None:
+    readme = flowed(ROOT / "README.md")
+    facts = [
+        f"remembers a finding for {REMEMBERED_RUNS} runs after it stops being reported",
+        f"stays away for more than {REMEMBERED_RUNS} runs comes back as new",
+    ]
+
+    assert REMEMBERED_RUNS == 8
+    assert [fact for fact in facts if fact not in readme] == []

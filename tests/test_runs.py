@@ -297,11 +297,12 @@ def test_an_unwritable_run_folder_is_an_error_for_the_report(tmp_path: Path) -> 
 def write_report_file(run: Path, **fields: object) -> None:
     run.mkdir(parents=True)
     report = {
-        "format": 2,
+        "format": 3,
         "config": "/etc/doc-truth.toml",
         "findings": [],
         "not_rechecked": [],
         "no_longer_reported": [],
+        "remembered": [],
     }
     (run / "report.json").write_text(json.dumps(report | fields), encoding="utf-8")
 
@@ -318,6 +319,16 @@ def earlier_entry(id_: str, *, runs_open: int = 1) -> dict[str, object]:
             "doc": {"file": "docs/ops.md", "lines": ["A line."]},
             "evidence": {"probe": "uptime", "lines": ["up 3 days"]},
         },
+    }
+
+
+def remembered_entry(id_: str) -> dict[str, object]:
+    return {
+        **{key: value for key, value in earlier_entry(id_).items() if key != "acknowledged"},
+        "last_run": "20261012T080000Z",
+        "runs_gone": 2,
+        "changed": {"doc": False, "output": True},
+        "unread": False,
     }
 
 
@@ -516,3 +527,100 @@ def test_finding_the_runs_dir_creates_nothing(tmp_path: Path) -> None:
     assert runs_dir(config, None) == tmp_path / ".doc-truth" / "runs"
     assert runs_dir(config, tmp_path / "elsewhere") == tmp_path / "elsewhere" / "runs"
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_report_in_the_format_before_this_one_is_still_the_previous_report(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    run = tmp_path / "20261026T080000Z"
+    run.mkdir()
+    (run / "report.json").write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "config": "/etc/doc-truth.toml",
+                "findings": [earlier_entry("open", runs_open=2)],
+                "not_rechecked": [earlier_entry("waiting")],
+                "no_longer_reported": [earlier_entry("gone")],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert [(item.id, item.runs_open) for item in previous.findings] == [
+        ("open", 2),
+        ("waiting", 1),
+    ]
+    assert [item.id for item in previous.no_longer_reported] == ["gone"]
+    assert previous.remembered == ()
+
+
+def test_a_report_in_a_format_after_this_one_means_no_previous_report(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    write_report_file(tmp_path / "20261026T080000Z", format=4, findings=[earlier_entry("newer")])
+
+    assert latest_report(tmp_path, config_at_etc) is None
+
+
+def test_a_finding_in_the_previous_report_was_last_reported_in_that_run(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    write_report_file(
+        tmp_path / "20261026T080000Z",
+        findings=[{**earlier_entry("open"), "last_run": None}],
+        not_rechecked=[
+            {**earlier_entry("waiting"), "last_run": "20261012T080000Z"},
+            earlier_entry("waiting since an older format"),
+        ],
+    )
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert [item.last_run for item in previous.findings] == [
+        "20261026T080000Z",
+        "20261012T080000Z",
+        None,
+    ]
+
+
+def test_remembered_findings_are_read_from_the_previous_report(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    write_report_file(tmp_path / "20261026T080000Z", remembered=[remembered_entry("away")])
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    (item,) = previous.remembered
+    assert (item.id, item.last_run, item.runs_gone, item.unread) == (
+        "away",
+        "20261012T080000Z",
+        2,
+        False,
+    )
+    assert (item.changes.doc, item.changes.output) == (False, True)
+    assert previous.findings == ()
+
+
+@pytest.mark.parametrize(
+    "remembered",
+    [3, [3], [{}], [{**remembered_entry("away"), "runs_gone": "2"}]],
+    ids=["not a list", "not objects", "no fields", "a wrong type"],
+)
+def test_malformed_remembered_findings_are_an_error(
+    tmp_path: Path, config_at_etc: Config, remembered: object
+) -> None:
+    write_report_file(tmp_path / "20261026T080000Z", remembered=remembered)
+
+    with pytest.raises(RunsError) as caught:
+        latest_report(tmp_path, config_at_etc)
+
+    assert str(caught.value) == (
+        f"cannot read {tmp_path / '20261026T080000Z' / 'report.json'}: "
+        "its findings aren't in the expected form"
+    )
