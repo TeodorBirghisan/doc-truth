@@ -1,6 +1,6 @@
 # doc-truth report for `homeserver`
 
-**4 findings: 3 confirmed, 1 suspect.** 3 new. 1 acknowledged. 2 no longer reported. 2 not rechecked. 2 probes failed. 2 findings dropped.
+**4 findings: 3 confirmed, 1 suspect.** 2 new. 1 came back. 1 acknowledged. 2 no longer reported. 2 not rechecked. 2 probes failed. 2 findings dropped.
 
 Checked 2026-10-13 07:05:09 UTC by doc-truth 0.1.0: 2 docs, 4 probes.
 Models: claude-sonnet-5-5, claude-haiku-5-5 (2 calls, 15,210 tokens in, 1,020 out, $0.04 as reported by Claude Code).
@@ -10,7 +10,9 @@ Compared with run 20261006T070500Z.
 
 ### Backup timer runs at 03:00, not 02:00
 
-`bde36b81` · New · Contradiction · likely fix: edit the doc
+`bde36b81` · Came back · Contradiction · likely fix: edit the doc
+
+It was last reported in run 20260922T070500Z. Since then the probe stopped printing the line it quotes, and it prints it again now. If you fixed this, something put it back: look for what else writes it.
 
 `docs/operations.md:3` says:
 
@@ -100,10 +102,10 @@ Why: The evidence shows otherwise.
 
 ## No longer reported
 
-These were in the last run or are acknowledged, and what they rest on worked this time, but the model didn't report them. They may be fixed, but a model can also miss things, so this isn't proof.
+These were in the last run or are acknowledged, and what they rest on worked this time, but the model didn't report them. Where a line one of them cited has changed, it may be fixed, but a model can also miss things, so this isn't proof.
 
-- `aaaa1111` in `docs/operations.md`: Caddy listens on 8443
-- `bbbb2222` in `docs/operations.md`: Grafana is on 11 (acknowledged)
+- `aaaa1111` in `docs/operations.md`: Caddy listens on 8443 (the probe no longer prints the line it quoted)
+- `bbbb2222` in `docs/operations.md`: Grafana is on 11 (acknowledged; nothing it cited has changed, so the model may have missed it)
 
 ## Not rechecked
 

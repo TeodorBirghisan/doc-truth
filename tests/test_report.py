@@ -18,7 +18,18 @@ from doc_truth.findings import (
     normalised,
     parse_findings,
 )
-from doc_truth.known import Earlier, Tracked, earlier_json, finding_id, identity_json
+from doc_truth.known import (
+    Back,
+    Changes,
+    Earlier,
+    Remembered,
+    Returned,
+    Tracked,
+    earlier_json,
+    finding_id,
+    identity_json,
+    remembered_json,
+)
 from doc_truth.model import Answer
 from doc_truth.report import Report, report_json, report_markdown, summary
 from doc_truth.verify import Dropped
@@ -115,6 +126,7 @@ def tracked(
     runs_open: int = 1,
     acknowledgement: Acknowledgement | None = None,
     note: str | None = None,
+    returned: Returned | None = None,
 ) -> Tracked:
     return Tracked(
         id=finding_id(identity_of(found)) if acknowledgement is None else acknowledgement.id,
@@ -123,6 +135,20 @@ def tracked(
         runs_open=runs_open,
         acknowledgement=acknowledgement,
         note=note,
+        returned=returned,
+    )
+
+
+def came_back(
+    back: Back = Back.AFTER_CHANGE,
+    *,
+    doc: bool = False,
+    output: bool = False,
+    last_run: str | None = "20260922T070500Z",
+    runs_gone: int = 2,
+) -> Returned:
+    return Returned(
+        back=back, last_run=last_run, runs_gone=runs_gone, changes=Changes(doc=doc, output=output)
     )
 
 
@@ -135,6 +161,7 @@ def tracking_json(
         "runs_open": runs_open,
         "acknowledged": False,
         "note": note,
+        "back": None,
         "identity": identity_json(identity),
     }
 
@@ -192,6 +219,8 @@ FIXED = Earlier(
     identity=identity_of(BACKUP),
     runs_open=2,
     acknowledged=False,
+    last_run="20261006T070500Z",
+    changes=Changes(output=True),
 )
 FIXED_AND_KNOWN = Earlier(
     id="bbbb2222",
@@ -200,6 +229,18 @@ FIXED_AND_KNOWN = Earlier(
     identity=identity_of(BACKUP),
     runs_open=0,
     acknowledged=True,
+    changes=Changes(),
+)
+REMEMBERED = Remembered(
+    id="eeee5555",
+    title="The feed is\nserved as HTML",
+    confidence=Confidence.SUSPECT,
+    identity=identity_of(SNAPSHOTS),
+    runs_open=3,
+    last_run="20260915T070500Z",
+    runs_gone=4,
+    changes=Changes(doc=True),
+    unread=True,
 )
 UNCHECKED = Earlier(
     id="cccc3333",
@@ -264,7 +305,7 @@ def full_report() -> Report:
             tracked(SUSPECT_UPDATES),
             tracked(APT_SCOPE),
             tracked(EXPORTER, runs_open=3, note=OLD_NOTE),
-            tracked(BACKUP),
+            tracked(BACKUP, returned=came_back(output=True)),
             tracked(SNAPSHOTS, runs_open=5, acknowledgement=SNAPSHOTS_KNOWN),
         ),
         dropped=(DROPPED_ON_A_FAILED_PROBE, DROPPED_WITH_INVENTED_NAMES),
@@ -272,6 +313,7 @@ def full_report() -> Report:
         previous_run="20261006T070500Z",
         no_longer_reported=(FIXED, FIXED_AND_KNOWN),
         not_rechecked=(UNCHECKED, LEFT_THE_CONFIG),
+        remembered=(REMEMBERED,),
     )
 
 
@@ -347,8 +389,8 @@ def test_findings_in_one_doc_go_by_first_line_then_last_line_then_model_order() 
 
 def test_the_summary_counts_in_words() -> None:
     assert summary(full_report()) == (
-        "4 findings: 3 confirmed, 1 suspect. 3 new. 1 acknowledged. 2 no longer reported. "
-        "2 not rechecked. 2 probes failed. 2 findings dropped."
+        "4 findings: 3 confirmed, 1 suspect. 2 new. 1 came back. 1 acknowledged. "
+        "2 no longer reported. 2 not rechecked. 2 probes failed. 2 findings dropped."
     )
     assert summary(
         small_report(
@@ -407,7 +449,7 @@ def test_a_known_entry_that_left_the_config_says_to_delete_it_not_that_it_goes_a
 
 
 def test_earlier_titles_cannot_start_a_line_of_their_own() -> None:
-    report = replace(small_report(), no_longer_reported=(FIXED,))
+    report = replace(small_report(), no_longer_reported=(replace(FIXED, changes=None),))
 
     assert "\n- `aaaa1111` in `docs/operations.md`: Caddy listens on 8443\n" in report_markdown(
         report
@@ -424,7 +466,7 @@ def test_the_json_report() -> None:
     data = json.loads(report_json(full_report()))
 
     assert data == {
-        "format": 2,
+        "format": 3,
         "doc_truth_version": "0.1.0",
         "prompt_version": 1,
         "host": "homeserver",
@@ -435,7 +477,8 @@ def test_the_json_report() -> None:
         "counts": {
             "confirmed": 3,
             "suspect": 1,
-            "new": 3,
+            "new": 2,
+            "came_back": 1,
             "acknowledged": 1,
             "no_longer_reported": 2,
             "not_rechecked": 2,
@@ -469,6 +512,12 @@ def test_the_json_report() -> None:
         "findings": [
             {
                 **tracking_json(BACKUP),
+                "back": {
+                    "state": "after_change",
+                    "last_run": "20260922T070500Z",
+                    "runs_gone": 2,
+                    "changed": {"doc": False, "output": True},
+                },
                 "kind": "contradiction",
                 "title": "Backup timer runs at 03:00, not 02:00",
                 "doc": {
@@ -557,6 +606,7 @@ def test_the_json_report() -> None:
         ],
         "no_longer_reported": [earlier_json(FIXED), earlier_json(FIXED_AND_KNOWN)],
         "not_rechecked": [earlier_json(UNCHECKED), earlier_json(LEFT_THE_CONFIG)],
+        "remembered": [remembered_json(REMEMBERED)],
         "dropped": [
             {
                 "finding": {
@@ -625,3 +675,170 @@ def test_an_acknowledged_finding_says_how_sure_the_model_is() -> None:
     report = replace(small_report(), findings=(tracked(suspect, acknowledgement=SNAPSHOTS_KNOWN),))
 
     assert "· Suspect, acknowledged on 2026-10-01 until 2026-12-01 ·" in report_markdown(report)
+
+
+def markdown_with(found: Tracked) -> str:
+    return report_markdown(
+        replace(small_report(), findings=(found,), previous_run="20261006T070500Z")
+    )
+
+
+def test_a_finding_back_after_the_host_changed_asks_what_else_writes_it() -> None:
+    markdown = markdown_with(tracked(BACKUP, returned=came_back(output=True)))
+
+    assert "· Came back · Contradiction ·" in markdown
+    assert (
+        "\n\nIt was last reported in run 20260922T070500Z. Since then the probe stopped "
+        "printing the line it quotes, and it prints it again now. If you fixed this, something "
+        "put it back: look for what else writes it.\n\n" in markdown
+    )
+
+
+def test_a_finding_back_after_the_doc_changed_asks_whether_the_doc_is_generated() -> None:
+    markdown = markdown_with(tracked(BACKUP, returned=came_back(doc=True)))
+
+    assert (
+        "Since then the doc line it cites changed, and it reads as before now. If you fixed "
+        "the doc, something restored it: is this doc generated?\n" in markdown
+    )
+    assert "what else writes" not in markdown
+
+
+def test_a_finding_back_after_both_sides_changed_says_both() -> None:
+    markdown = markdown_with(tracked(BACKUP, returned=came_back(doc=True, output=True)))
+
+    assert (
+        "Since then the doc line it cites and the line of probe output it quotes both changed, "
+        "and both read as before now. If you fixed this, something put it back: look for what "
+        "else writes them.\n" in markdown
+    )
+
+
+def test_a_finding_that_came_back_from_an_unknown_run_names_none() -> None:
+    markdown = markdown_with(tracked(BACKUP, returned=came_back(output=True, last_run=None)))
+
+    assert "\n\nSince then the probe stopped printing" in markdown
+    assert "last reported" not in markdown
+
+
+def test_a_finding_missed_in_between_keeps_its_count_and_says_so() -> None:
+    missed = tracked(BACKUP, runs_open=4, returned=came_back(Back.MISSED, runs_gone=1))
+    longer = tracked(BACKUP, runs_open=6, returned=came_back(Back.MISSED, runs_gone=3))
+
+    assert "· Open for 4 runs · Contradiction ·" in markdown_with(missed)
+    assert (
+        "\n\nNot reported in the last 1 run, though nothing it cites changed, so it was "
+        "probably missed in between.\n\n" in markdown_with(missed)
+    )
+    assert "Not reported in the last 3 runs, though" in markdown_with(longer)
+
+
+def test_a_finding_reported_before_names_the_run_and_gives_no_hint() -> None:
+    markdown = markdown_with(tracked(BACKUP, returned=came_back(Back.REPORTED_BEFORE)))
+
+    assert "· Reported before · Contradiction ·" in markdown
+    assert "\n\nIt was last reported in run 20260922T070500Z.\n\n" in markdown
+    assert "Since then" not in markdown
+    assert "missed" not in markdown
+
+
+def test_a_finding_reported_before_in_an_unknown_run_has_no_note() -> None:
+    returned = came_back(Back.REPORTED_BEFORE, last_run=None)
+
+    markdown = markdown_with(tracked(BACKUP, returned=returned))
+
+    assert "· Reported before · Contradiction · likely fix: edit the doc\n\n`docs/" in markdown
+
+
+def test_a_returning_finding_is_not_counted_as_new() -> None:
+    for back in Back:
+        report = replace(
+            small_report(),
+            findings=(tracked(BACKUP, returned=came_back(back, output=True)),),
+            previous_run="20261006T070500Z",
+        )
+
+        assert json.loads(report_json(report))["counts"]["new"] == 0
+        assert "0 new." in summary(report)
+
+
+def test_only_a_finding_back_after_a_change_counts_as_came_back() -> None:
+    def report_with(back: Back) -> Report:
+        return replace(
+            small_report(),
+            findings=(tracked(BACKUP, returned=came_back(back, output=True)),),
+            previous_run="20261006T070500Z",
+        )
+
+    assert summary(report_with(Back.AFTER_CHANGE)) == (
+        "1 finding: 1 confirmed, 0 suspect. 0 new. 1 came back."
+    )
+    assert "came back" not in summary(report_with(Back.MISSED))
+    assert "came back" not in summary(report_with(Back.REPORTED_BEFORE))
+    assert json.loads(report_json(report_with(Back.MISSED)))["counts"]["came_back"] == 0
+
+
+def test_an_acknowledged_finding_back_after_a_change_stays_acknowledged_and_says_so() -> None:
+    known = tracked(SNAPSHOTS, acknowledgement=SNAPSHOTS_KNOWN, returned=came_back(output=True))
+    report = replace(small_report(), findings=(known,), previous_run="20261006T070500Z")
+
+    markdown = report_markdown(report)
+
+    assert report.confirmed == ()
+    assert summary(report) == "No findings. 1 came back. 1 acknowledged."
+    assert "· Confirmed, acknowledged on 2026-10-01 until 2026-12-01 ·" in markdown
+    assert "\n\nCame back. It was last reported in run 20260922T070500Z." in markdown
+
+
+def test_an_acknowledged_finding_that_was_only_missed_gets_no_note() -> None:
+    for back in (Back.MISSED, Back.REPORTED_BEFORE):
+        known = tracked(SNAPSHOTS, acknowledgement=SNAPSHOTS_KNOWN, returned=came_back(back))
+
+        markdown = markdown_with(known)
+
+        assert "Not reported in the last" not in markdown
+        assert "last reported in run" not in markdown
+
+
+def no_longer_reported_line(item: Earlier) -> str:
+    markdown = report_markdown(replace(small_report(), no_longer_reported=(item,)))
+    (line,) = [line for line in markdown.splitlines() if line.startswith("- `aaaa1111`")]
+    return line.removeprefix("- `aaaa1111` in `docs/operations.md`: Caddy listens on 8443")
+
+
+def test_a_finding_no_longer_reported_says_what_changed() -> None:
+    def gone(**changed: bool) -> Earlier:
+        return replace(FIXED, changes=Changes(**changed))
+
+    assert no_longer_reported_line(gone(doc=True)) == " (a doc line it cited has changed)"
+    assert no_longer_reported_line(gone(output=True)) == (
+        " (the probe no longer prints the line it quoted)"
+    )
+    assert no_longer_reported_line(gone(doc=True, output=True)) == (
+        " (the doc line it cited and the line of output it quoted have both changed)"
+    )
+    assert no_longer_reported_line(gone()) == (
+        " (nothing it cited has changed, so the model may have missed it)"
+    )
+
+
+def test_an_unchanged_omission_no_longer_reported_does_not_read_as_a_miss() -> None:
+    omission = replace(identity_of(BACKUP), kind=Kind.OMISSION)
+
+    assert no_longer_reported_line(replace(FIXED, identity=omission, changes=Changes())) == ""
+    assert no_longer_reported_line(
+        replace(FIXED, identity=omission, changes=Changes(output=True))
+    ) == (" (the probe no longer prints the line it quoted)")
+
+
+def test_what_changed_follows_the_acknowledgement_label() -> None:
+    known = replace(FIXED, acknowledged=True, from_known=True)
+    expired = replace(FIXED, acknowledged=False, from_known=True, changes=Changes())
+
+    assert no_longer_reported_line(known) == (
+        " (acknowledged; the probe no longer prints the line it quoted)"
+    )
+    assert no_longer_reported_line(expired) == (
+        " (its acknowledgement ran out; delete its entry to stop listing it; nothing it cited "
+        "has changed, so the model may have missed it)"
+    )

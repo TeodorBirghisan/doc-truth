@@ -80,6 +80,14 @@ def only_id(run: Path) -> str:
     return identifier
 
 
+def back_of(run: Path) -> dict[str, object]:
+    findings = report_of(run)["findings"]
+    assert isinstance(findings, list)
+    (finding,) = findings
+    back: dict[str, object] = finding["back"]
+    return back
+
+
 def ack_the_finding(
     path: Path, capsys: pytest.CaptureFixture[str], *flags: str
 ) -> tuple[int, str, str]:
@@ -305,23 +313,193 @@ def test_a_finding_the_model_stops_reporting_is_no_longer_reported(
 
     assert code == 0
     assert err.endswith("\nNo findings. 1 no longer reported.\n")
-    assert f"\n- `{only_id(first)}` in `docs/operations.md`: {TITLE}\n" in markdown_of(run)
+    assert (
+        f"\n- `{only_id(first)}` in `docs/operations.md`: {TITLE} "
+        "(nothing it cited has changed, so the model may have missed it)\n" in markdown_of(run)
+    )
     assert "\n## No longer reported\n" in markdown_of(run)
     assert "isn't proof" in " ".join(markdown_of(run).split())
 
 
-def test_a_finding_the_model_misses_once_comes_back_as_new(
+def test_a_finding_the_model_misses_once_is_open_again_not_new(
     capsys: pytest.CaptureFixture[str], config: Path, fake_claude: FakeClaude
 ) -> None:
     answer_with(fake_claude, a_finding())
-    check(config, capsys)
+    _, first, _ = check(config, capsys)
     answer_with(fake_claude)
     check(config, capsys)
     answer_with(fake_claude, a_finding())
 
+    code, run, err = check(config, capsys)
+
+    assert code == 1
+    assert err.endswith("\n1 finding: 1 confirmed, 0 suspect. 0 new.\n")
+    assert only_id(run) == only_id(first)
+    assert "· Open for 3 runs ·" in markdown_of(run)
+    assert (
+        "\n\nNot reported in the last 1 run, though nothing it cites changed, so it was probably "
+        "missed in between.\n\n" in markdown_of(run)
+    )
+    assert back_of(run) == {
+        "state": "missed",
+        "last_run": first.name,
+        "runs_gone": 1,
+        "changed": {"doc": False, "output": False},
+    }
+    assert report_of(run)["remembered"] == []
+
+
+def test_a_finding_missed_for_two_runs_is_still_recognised(
+    capsys: pytest.CaptureFixture[str], config: Path, fake_claude: FakeClaude
+) -> None:
+    answer_with(fake_claude, a_finding())
+    _, first, _ = check(config, capsys)
+    answer_with(fake_claude)
+    check(config, capsys)
+    _, quiet, _ = check(config, capsys)
+    answer_with(fake_claude, a_finding())
+
     _, run, _ = check(config, capsys)
 
-    assert counts(run)["new"] == 1
+    assert counts(quiet)["no_longer_reported"] == 0
+    assert "· Open for 4 runs ·" in markdown_of(run)
+    assert "Not reported in the last 2 runs, though" in markdown_of(run)
+    assert back_of(run)["last_run"] == first.name
+
+
+def test_a_fix_on_the_host_that_reverts_came_back(
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+    config: Path,
+    fake_claude: FakeClaude,
+) -> None:
+    answer_with(fake_claude, a_finding())
+    _, first, _ = check(config, capsys)
+    write_config(CONFIG.replace("03:00:00", "02:00:00"))
+    answer_with(fake_claude)
+    fixed_code, fixed, _ = check(config, capsys)
+    write_config(CONFIG)
+    answer_with(fake_claude, a_finding())
+
+    code, run, err = check(config, capsys)
+
+    assert fixed_code == 0
+    assert f": {TITLE} (the probe no longer prints the line it quoted)\n" in markdown_of(fixed)
+    assert code == 1
+    assert err.endswith("\n1 finding: 1 confirmed, 0 suspect. 0 new. 1 came back.\n")
+    assert only_id(run) == only_id(first)
+    assert "· Came back · Contradiction ·" in markdown_of(run)
+    assert (
+        f"\n\nIt was last reported in run {first.name}. Since then the probe stopped printing "
+        "the line it quotes, and it prints it again now. If you fixed this, something put it "
+        "back: look for what else writes it.\n\n" in markdown_of(run)
+    )
+    assert counts(run)["came_back"] == 1
+    assert back_of(run) == {
+        "state": "after_change",
+        "last_run": first.name,
+        "runs_gone": 1,
+        "changed": {"doc": False, "output": True},
+    }
+
+
+def test_a_fix_to_the_doc_that_reverts_asks_whether_the_doc_is_generated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], config: Path, fake_claude: FakeClaude
+) -> None:
+    doc = tmp_path / "docs" / "operations.md"
+    answer_with(fake_claude, a_finding())
+    check(config, capsys)
+    doc.write_text(OPERATIONS.replace("02:00", "03:00"), encoding="utf-8")
+    answer_with(fake_claude)
+    _, fixed, _ = check(config, capsys)
+    doc.write_text(OPERATIONS, encoding="utf-8")
+    answer_with(fake_claude, a_finding())
+
+    _, run, err = check(config, capsys)
+
+    assert f": {TITLE} (a doc line it cited has changed)\n" in markdown_of(fixed)
+    assert err.endswith(" 0 new. 1 came back.\n")
+    assert "is this doc generated?" in markdown_of(run)
+
+
+def test_another_value_on_the_same_line_is_new_not_back(
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+    config: Path,
+    fake_claude: FakeClaude,
+) -> None:
+    answer_with(fake_claude, a_finding())
+    _, first, _ = check(config, capsys)
+    write_config(CONFIG.replace("03:00:00", "02:00:00"))
+    answer_with(fake_claude)
+    check(config, capsys)
+    write_config(CONFIG.replace("03:00:00", "04:00:00"))
+    answer_with(fake_claude, a_finding(schedule="04:00:00"))
+
+    _, run, err = check(config, capsys)
+
+    assert err.endswith("\n1 finding: 1 confirmed, 0 suspect. 1 new.\n")
+    assert only_id(run) != only_id(first)
+    assert "· New ·" in markdown_of(run)
+    assert "what else writes" not in markdown_of(run)
+
+
+def test_a_fix_that_reverts_under_an_acknowledgement_is_not_silent(
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+    config: Path,
+    fake_claude: FakeClaude,
+) -> None:
+    answer_with(fake_claude, a_finding())
+    ack_the_finding(config, capsys)
+    write_config(CONFIG.replace("03:00:00", "02:00:00"))
+    answer_with(fake_claude)
+    _, fixed, _ = check(config, capsys)
+    write_config(CONFIG)
+    answer_with(fake_claude, a_finding())
+
+    code, run, err = check(config, capsys)
+
+    assert (
+        f": {TITLE} (acknowledged; the probe no longer prints the line it quoted)\n"
+        in markdown_of(fixed)
+    )
+    assert code == 0
+    assert err.endswith("\nNo findings. 1 came back. 1 acknowledged.\n")
+    assert "\n\nCame back. It was last reported in run " in markdown_of(run)
+    assert "look for what else writes it." in markdown_of(run)
+
+
+def test_an_acknowledged_finding_that_stays_away_is_remembered_once(
+    capsys: pytest.CaptureFixture[str], config: Path, fake_claude: FakeClaude
+) -> None:
+    answer_with(fake_claude, a_finding())
+    ack_the_finding(config, capsys)
+    answer_with(fake_claude)
+    check(config, capsys)
+
+    _, run, _ = check(config, capsys)
+
+    remembered = report_of(run)["remembered"]
+    assert isinstance(remembered, list)
+    assert [item["runs_gone"] for item in remembered] == [2]
+    assert counts(run)["no_longer_reported"] == 1
+
+
+def test_a_report_from_the_format_before_this_one_still_counts_as_the_last_run(
+    capsys: pytest.CaptureFixture[str], config: Path, fake_claude: FakeClaude
+) -> None:
+    answer_with(fake_claude, a_finding())
+    _, first, _ = check(config, capsys)
+    old = report_of(first)
+    old["format"] = 2
+    del old["remembered"]
+    (first / "report.json").write_text(json.dumps(old), encoding="utf-8")
+
+    _, run, err = check(config, capsys)
+
+    assert "warning" not in err
+    assert "· Open for 2 runs ·" in markdown_of(run)
 
 
 def test_ack_accepts_a_finding_listed_as_no_longer_reported(
@@ -353,7 +531,10 @@ def test_an_acknowledgement_with_nothing_left_to_match_is_listed_as_acknowledged
     code, run, _ = check(config, capsys)
 
     assert code == 0
-    assert f": {TITLE} (acknowledged)\n" in markdown_of(run)
+    assert (
+        f": {TITLE} (acknowledged; nothing it cited has changed, so the model may have missed "
+        "it)\n" in markdown_of(run)
+    )
     assert counts(run)["no_longer_reported"] == 1
 
 
@@ -368,8 +549,8 @@ def test_an_expired_acknowledgement_with_nothing_left_to_match_says_how_to_clear
     _, run, _ = check(config, capsys)
 
     assert (
-        f": {TITLE} (its acknowledgement ran out; delete its entry to stop listing it)\n"
-        in markdown_of(run)
+        f": {TITLE} (its acknowledgement ran out; delete its entry to stop listing it; nothing "
+        "it cited has changed, so the model may have missed it)\n" in markdown_of(run)
     )
 
 

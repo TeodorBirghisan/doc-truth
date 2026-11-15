@@ -291,9 +291,12 @@ again when:
 Two more sections cover what didn't come back:
 
 - **No longer reported:** it was in the last run or is acknowledged, what it rests
-  on worked this time, and the model didn't report it. It may be fixed, but a
-  model can also miss things, so this isn't proof. You can still `ack` it by its ID.
-  An acknowledgement stays listed until you delete its entry.
+  on worked this time, and the model didn't report it. The report says what it can
+  tell: a doc line the finding cited has changed, the probe no longer prints the
+  line it quoted, or nothing it cited has changed, so the model may have missed
+  it. A changed line may mean a fix, but a model can also miss things, so this
+  isn't proof. You can still `ack` it by its ID. An acknowledgement stays listed
+  until you delete its entry.
 - **Not rechecked:** a probe failed, a doc or probe has left the config, or the
   model's quotes didn't check out, so this run can't say. A finding whose doc or
   probe left the config is listed once and then dropped, unless it's acknowledged.
@@ -310,7 +313,6 @@ much:
 - An acknowledgement won't hold if its line of output changes every run, as the
   countdown columns of `systemctl list-timers` do. The
   [`timer-schedules` recipe](docs/probes.md#systemd-timers-schedules) prints steady lines.
-- When the model misses a finding for one run, it comes back as new.
 - When one finding goes and another appears on the same table row and probe, the new
   one can show as still open. It still counts.
 
@@ -322,6 +324,45 @@ output is tied to the first of them.
 Apart from omissions, which must also quote the same line of output, a finding's kind
 isn't compared, because a contradiction and a stale status are often two fair
 descriptions of the same problem.
+
+### Findings that come back
+
+A finding can go away and return: a fix gets undone, or the model misses it for a
+run. doc-truth remembers a finding for 8 runs after it stops being reported, and
+whether the lines it cited changed in that time. An acknowledged finding is
+remembered for as long as its entry stays in the known-findings file. A returning
+finding is recognised the way an acknowledgement is: it cites a doc line in common
+and quotes the same line of output. It keeps its ID, and the report says which of
+three things happened:
+
+- **Came back:** a line it cited changed while it was away, and reads as before
+  now. So a fix was made and undone. The report says whether the doc or the probe
+  output changed, and asks what else writes it: a tool that rewrites its own cron
+  file, or a doc that is generated from somewhere else. The summary line counts
+  these, acknowledged ones included.
+- **Open for N runs,** with a note: nothing it cited changed while it was away, so
+  the model probably missed it. The runs it was away count as open.
+- **Reported before:** doc-truth can't tell which. The finding is an omission,
+  which is fixed by adding a line and so changes none of the lines it cites; or a
+  run couldn't check it while it was away, because a probe failed, a doc or probe
+  was out of the config, or the model's quotes didn't check out; or a line it
+  cited reads differently now.
+
+An acknowledged finding that came back after a change stays acknowledged, and its
+entry in the report says that it came back. The exit code follows the same rules as
+before: a confirmed finding that is back fails `check` like any other.
+
+The limits:
+
+- It compares whole lines. Probe output that changes from run to run and then
+  repeats, such as a weekday in a countdown column, can make a finding the model
+  missed look like a fix that was undone.
+- A finding that stays away for more than 8 runs comes back as new, unless it is
+  acknowledged.
+- When the model quotes another line of output for the same problem, the finding
+  comes back as new.
+- What doc-truth remembers is in the last run's `report.json`. Delete the run
+  folders and it starts again.
 
 ## Troubleshooting
 
@@ -410,7 +451,8 @@ doc-truth is designed around that lesson.
 - **v0.1:** the config format and `validate` (done), `collect` (done),
   `check` with quote verification, Markdown and JSON reports and exit codes
   (done), [probe recipes](docs/probes.md) for systemd, cron, HTTP and tool
-  versions (done), [known findings](#known-findings) (done, ahead of plan). Still
+  versions (done), [known findings](#known-findings) and
+  [findings that come back](#findings-that-come-back) (done, ahead of plan). Still
   planned: a few weeks on a real server next to the script it replaces, a tested
   timer example, and the first release on PyPI.
 - **v0.2:** local models via OpenAI-compatible endpoints, automatic checks for

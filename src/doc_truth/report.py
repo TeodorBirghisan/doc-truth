@@ -12,11 +12,22 @@ from doc_truth.evidence import (
     utc_timestamp,
 )
 from doc_truth.findings import Confidence, DocQuote, Finding, Fix, Kind, ProbeQuote, one_line
-from doc_truth.known import Earlier, Tracked, earlier_json, identity_json
+from doc_truth.known import (
+    Back,
+    Earlier,
+    Remembered,
+    Returned,
+    Tracked,
+    earlier_json,
+    identity_json,
+    remembered_json,
+    returned_json,
+    unchanged_means_missed,
+)
 from doc_truth.model import Answer
 from doc_truth.verify import Dropped
 
-REPORT_FORMAT = 2
+REPORT_FORMAT = 3
 
 _KINDS = {
     Kind.CONTRADICTION: "Contradiction",
@@ -40,6 +51,7 @@ class Report:
     previous_run: str | None = None
     no_longer_reported: tuple[Earlier, ...] = ()
     not_rechecked: tuple[Earlier, ...] = ()
+    remembered: tuple[Remembered, ...] = ()
 
     @property
     def confirmed(self) -> tuple[Tracked, ...]:
@@ -105,8 +117,8 @@ def report_markdown(report: Report) -> str:
         blocks.append("## No longer reported")
         blocks.append(
             "These were in the last run or are acknowledged, and what they rest on worked this "
-            "time, but the model didn't report them. They may be fixed, but a model can also "
-            "miss things, so this isn't proof."
+            "time, but the model didn't report them. Where a line one of them cited has changed, "
+            "it may be fixed, but a model can also miss things, so this isn't proof."
         )
         blocks.append(_earlier_markdown(report.no_longer_reported))
     if report.not_rechecked:
@@ -146,6 +158,11 @@ def _finding_markdown(item: Tracked) -> str:
     extras = [f"Reason: {one_line(item.acknowledgement.reason)}"] if item.acknowledgement else []
     if item.note is not None:
         extras.append(item.note)
+    returned = item.returned
+    if returned is not None and (
+        returned.back is Back.AFTER_CHANGE or item.acknowledgement is None
+    ):
+        extras.extend(_returned_note(returned, acknowledged=item.acknowledgement is not None))
     return "\n\n".join(
         [
             f"### {one_line(finding.title)}",
@@ -166,7 +183,42 @@ def _state(item: Tracked) -> str:
         until = "" if acknowledgement.until is None else f" until {acknowledgement.until}"
         confidence = item.finding.confidence.value.capitalize()
         return f"{confidence}, acknowledged on {acknowledgement.acknowledged}{until}"
+    if item.returned is not None and item.returned.back is Back.AFTER_CHANGE:
+        return "Came back"
+    if item.returned is not None and item.returned.back is Back.REPORTED_BEFORE:
+        return "Reported before"
     return "New" if item.runs_open == 1 else f"Open for {item.runs_open} runs"
+
+
+def _returned_note(returned: Returned, *, acknowledged: bool) -> list[str]:
+    last = (
+        [] if returned.last_run is None else [f"It was last reported in run {returned.last_run}."]
+    )
+    if returned.back is Back.REPORTED_BEFORE:
+        return [" ".join(last)] if last else []
+    if returned.back is Back.MISSED:
+        return [
+            f"Not reported in the last {_count(returned.runs_gone, 'run')}, though nothing it "
+            "cites changed, so it was probably missed in between."
+        ]
+    if returned.changes.doc and returned.changes.output:
+        since = (
+            "Since then the doc line it cites and the line of probe output it quotes both "
+            "changed, and both read as before now. If you fixed this, something put it back: "
+            "look for what else writes them."
+        )
+    elif returned.changes.doc:
+        since = (
+            "Since then the doc line it cites changed, and it reads as before now. If you "
+            "fixed the doc, something restored it: is this doc generated?"
+        )
+    else:
+        since = (
+            "Since then the probe stopped printing the line it quotes, and it prints it again "
+            "now. If you fixed this, something put it back: look for what else writes it."
+        )
+    # An acknowledged finding's state names its acknowledgement, so the note has to say this.
+    return [" ".join([*(["Came back."] if acknowledged else []), *last, since])]
 
 
 def _earlier_markdown(items: Iterable[Earlier]) -> str:
@@ -184,13 +236,30 @@ def _earlier_label(item: Earlier) -> str:
             if item.from_known
             else " (left the config, so it's listed only this once)"
         )
+    labels = []
     if item.acknowledged:
-        return " (acknowledged)"
-    return (
-        " (its acknowledgement ran out; delete its entry to stop listing it)"
-        if item.from_known
-        else ""
-    )
+        labels.append("acknowledged")
+    elif item.from_known:
+        labels.append("its acknowledgement ran out; delete its entry to stop listing it")
+    changed = _changed_label(item)
+    if changed is not None:
+        labels.append(changed)
+    return f" ({'; '.join(labels)})" if labels else ""
+
+
+def _changed_label(item: Earlier) -> str | None:
+    changes = item.changes
+    if changes is None:
+        return None
+    if changes.doc and changes.output:
+        return "the doc line it cited and the line of output it quoted have both changed"
+    if changes.doc:
+        return "a doc line it cited has changed"
+    if changes.output:
+        return "the probe no longer prints the line it quoted"
+    if unchanged_means_missed(item.identity):
+        return "nothing it cited has changed, so the model may have missed it"
+    return None
 
 
 def report_json(report: Report) -> str:
@@ -208,6 +277,7 @@ def report_json(report: Report) -> str:
             "confirmed": len(report.confirmed),
             "suspect": len(report.suspect),
             "new": _new_count(report),
+            "came_back": _came_back_count(report),
             "acknowledged": len(report.acknowledged),
             "no_longer_reported": len(report.no_longer_reported),
             "not_rechecked": len(report.not_rechecked),
@@ -229,6 +299,7 @@ def report_json(report: Report) -> str:
         ],
         "no_longer_reported": [earlier_json(item) for item in report.no_longer_reported],
         "not_rechecked": [earlier_json(item) for item in report.not_rechecked],
+        "remembered": [remembered_json(item) for item in report.remembered],
         "dropped": [
             {"finding": _finding_json(item.finding), "problems": list(item.problems)}
             for item in report.dropped
@@ -247,6 +318,8 @@ def _summary_parts(report: Report) -> list[str]:
     ]
     if report.previous_run is not None and confirmed + suspect:
         parts.append(f"{_new_count(report)} new.")
+    if _came_back_count(report):
+        parts.append(f"{_came_back_count(report)} came back.")
     if report.acknowledged:
         parts.append(f"{len(report.acknowledged)} acknowledged.")
     if report.no_longer_reported:
@@ -261,7 +334,17 @@ def _summary_parts(report: Report) -> list[str]:
 
 
 def _new_count(report: Report) -> int:
-    return sum(item.runs_open == 1 for item in (*report.confirmed, *report.suspect))
+    return sum(
+        item.runs_open == 1 and item.returned is None
+        for item in (*report.confirmed, *report.suspect)
+    )
+
+
+def _came_back_count(report: Report) -> int:
+    return sum(
+        item.returned is not None and item.returned.back is Back.AFTER_CHANGE
+        for item in report.findings
+    )
 
 
 def _checked(report: Report) -> str:
@@ -328,6 +411,7 @@ def _tracked_json(item: Tracked) -> dict[str, object]:
             }
         ),
         "note": item.note,
+        "back": None if item.returned is None else returned_json(item.returned),
         "identity": identity_json(item.identity),
         **_finding_json(item.finding),
     }
