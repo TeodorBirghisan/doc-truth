@@ -13,7 +13,8 @@ _NOT_A_SECRET = re.compile(
     r"""(?ix)
     ["']?
     (?: true | false | yes | no | on | off | null | none | nil
-      | \$\{ [^}]* \} | \$\( [^)]* \) | < [^>]* > | \{\{ [^}]* \}\}
+      | \$\{ [A-Za-z_][A-Za-z0-9_]* (?: :? [-=?+] (?: \$\{? [A-Za-z_][A-Za-z0-9_]* \}? )? )? \}
+      | \$\( [^)]* \) | < [^>]* > | \{\{ [^}]* \}\}
       | \*+ | redacted
     )?
     ["']?
@@ -21,6 +22,10 @@ _NOT_A_SECRET = re.compile(
     """
 )
 _MARKER = re.compile(r"\[REDACTED:[a-z0-9-]+\]")
+_KEY_EDGE = re.compile(r"-----(?:BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----")
+_KEY_LEFTOVER = re.compile(r"[A-Za-z0-9+/=]+|-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----")
+_SCHEMES = "(?:bearer|basic|token|digest|negotiate|ntlm)"
+_UNLESS_EMPTY = r"(?:[ \t]++(?!(?-i:[A-Z_][A-Z0-9_]*=(?!=))))?"
 _AFTER_A_VALUE = "`,;)]}."
 
 
@@ -81,15 +86,16 @@ BUILT_IN_RULES = (
     ),
     _rule(
         "authorization",
-        rf"(?i)(?<![A-Za-z0-9_-])(?:Proxy-)?Authorization:[ \t]*(?:[A-Za-z][A-Za-z0-9-]*[ \t]+)?"
-        rf"(?P<{SECRET_GROUP}>(?!(?:bearer|basic|token|digest|negotiate|ntlm)(?![^\s\"']))"
-        rf"(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+))",
+        rf"(?i)(?<![A-Za-z0-9_-])(?:Proxy-)?Authorization:[ \t]*(?:{_SCHEMES}[ \t]+)?"
+        rf"(?P<{SECRET_GROUP}>(?!{_SCHEMES}(?![^\s\"']))"
+        rf"(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s\"'](?:[^\"'\n]*[^\s\"'])?))",
         skips_placeholders=True,
     ),
     _rule(
         "assignment",
         rf"(?i)(?P<quote>[\"'])?(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*{_NAME_END}"
-        rf"(?(quote)|[\"']?)(?:[ \t]*:[ \t]*|[ \t]+=[ \t]*|=)(?P<{SECRET_GROUP}>"
+        rf"(?(quote)|[\"']?)(?:[ \t]*:[ \t]*|[ \t]+=[ \t]*|={_UNLESS_EMPTY})"
+        rf"(?P<{SECRET_GROUP}>"
         rf"(?(quote)(?:\\.|(?!(?P=quote))[^\\\n])*"
         rf"|(?:\"(?:\\.|[^\"\\\n])*\"(?![^\s,;)\]}}])"
         rf"|'(?:\\.|[^'\\\n])*'(?![^\s,;)\]}}])"
@@ -183,17 +189,13 @@ def redact_identity(identity: Identity, redactor: Redactor) -> Identity:
     evidence = identity.evidence
     if not isinstance(evidence, ProbeOutput):
         return identity
-    spanning = {rule.name for rule in redactor.rules if rule.spans_lines}
-    lines = set()
-    for line in sorted(evidence.lines):
-        text, redactions = redactor.redact(line, where="evidence")
-        if hidden := [redaction.rule for redaction in redactions if redaction.rule in spanning]:
-            # Stored lines have no order, so the rest of the hidden block can't be told apart.
-            return replace(
-                identity, evidence=replace(evidence, lines=frozenset({marker(hidden[0])}))
-            )
-        lines.add(text)
-    return replace(identity, evidence=replace(evidence, lines=frozenset(lines)))
+    lines = sorted(evidence.lines)
+    hides_keys = any(rule.spans_lines for rule in redactor.rules)
+    if hides_keys and any(_KEY_EDGE.search(line) for line in lines):
+        # Stored lines have no order, so what's left of a hidden key is recognised by its shape.
+        lines = [line for line in lines if not _KEY_LEFTOVER.fullmatch(line)]
+    redacted = frozenset(redactor.redact(line, where="evidence")[0] for line in lines)
+    return replace(identity, evidence=replace(evidence, lines=redacted))
 
 
 def marker(rule: str) -> str:

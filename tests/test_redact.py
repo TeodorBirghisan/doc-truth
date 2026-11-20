@@ -153,6 +153,16 @@ def test_every_built_in_rule_has_a_case_above() -> None:
         ("Authorization: abc123def", "Authorization: [REDACTED:authorization]"),
         ('Authorization: Bearer "a b"', "Authorization: Bearer [REDACTED:authorization]"),
         ("password:hunter2", "password:[REDACTED:assignment]"),
+        ("password= hunter2", "password= [REDACTED:assignment]"),
+        ("password= dGVzdA==", "password= [REDACTED:assignment]"),
+        ("password= abc=def", "password= [REDACTED:assignment]"),
+        ("password= QUJDRA==", "password= [REDACTED:assignment]"),
+        (
+            'export RESTIC_PASSWORD="${RESTIC_PASSWORD:-hunter2}"',
+            "export RESTIC_PASSWORD=[REDACTED:assignment]",
+        ),
+        ("Authorization: s3cret extra", "Authorization: [REDACTED:authorization]"),
+        ("Authorization: Bearer abc host=x", "Authorization: Bearer [REDACTED:authorization]"),
     ],
 )
 def test_a_rule_with_a_secret_group_hides_only_the_value(text: str, expected: str) -> None:
@@ -206,6 +216,10 @@ def test_a_rule_with_a_secret_group_hides_only_the_value(text: str, expected: st
         "Authorization: Bearer",
         "X-Authorization-Mode: strict",
         "Authorization: basic",
+        "PASSWORD=${RESTIC_PASSWORD:-$FALLBACK}",
+        "PASSWORD=${RESTIC_PASSWORD:?}",
+        "Authorization: Bearer ${TOKEN}",
+        "password= ",
         "Environment=RESTIC_PASSWORD= RESTIC_REPOSITORY=/srv/restic TZ=UTC",
         '"Env": ["DB_PASSWORD=", "USER=admin", "PORT=5432"],',
         "PWD=/home/ops",
@@ -271,19 +285,41 @@ def test_an_identity_hides_its_probe_lines_and_keeps_its_doc_lines() -> None:
     )
 
 
-def test_an_identity_that_quoted_a_private_key_keeps_only_the_marker() -> None:
-    lines = frozenset({BEGIN, *PEM_BODY.splitlines(), END, "an unrelated line"})
-    identity = Identity(
+def key_identity(*lines: str) -> Identity:
+    return Identity(
         kind=Kind.CONTRADICTION,
         doc=CitedLines(file="docs/ops.md", lines=frozenset({"A line."})),
-        evidence=ProbeOutput(probe="keys", lines=lines),
+        evidence=ProbeOutput(probe="keys", lines=frozenset(lines)),
     )
 
-    redacted = redact_identity(identity, REDACTOR)
 
-    assert redacted.evidence == ProbeOutput(
-        probe="keys", lines=frozenset({"[REDACTED:private-key]"})
+def test_an_identity_that_quoted_a_private_key_reads_like_fresh_evidence() -> None:
+    output = f"key: {PRIVATE_KEY}\nmode: 600\n"
+    fresh = frozenset(hidden(output).splitlines())
+
+    redacted = redact_identity(
+        key_identity(*f"key: {PRIVATE_KEY}".splitlines(), "mode: 600"), REDACTOR
     )
+
+    assert redacted.evidence == ProbeOutput(probe="keys", lines=fresh)
+    assert fresh == {"key: [REDACTED:private-key]", "mode: 600"}
+
+
+def test_the_body_of_a_key_is_dropped_even_without_its_first_line() -> None:
+    lines = (*PEM_BODY.splitlines(), END, "mode: 600")
+
+    redacted = redact_identity(key_identity(*lines), REDACTOR)
+
+    assert redacted.evidence == ProbeOutput(probe="keys", lines=frozenset({"mode: 600"}))
+
+
+def test_a_key_is_kept_when_no_rule_hides_keys() -> None:
+    lines = (BEGIN, *PEM_BODY.splitlines(), END)
+    keep_keys = Redactor(rules=tuple(rule for rule in BUILT_IN_RULES if not rule.spans_lines))
+
+    redacted = redact_identity(key_identity(*lines), keep_keys)
+
+    assert redacted.evidence == ProbeOutput(probe="keys", lines=frozenset(lines))
 
 
 def test_an_identity_between_docs_is_left_alone() -> None:
@@ -481,6 +517,10 @@ MEBIBYTE = 1024 * 1024
         "Authorization: " + '"' * MEBIBYTE,
         "[REDACTED:assignment]" * (MEBIBYTE // 21),
         "password= " * (MEBIBYTE // 10),
+        "password= " + "A=" * (MEBIBYTE // 2),
+        "password=${A:-" + "a" * MEBIBYTE,
+        "Authorization: " + "a " * (MEBIBYTE // 2),
+        ("Authorization:" + " " * 10) * (MEBIBYTE // 24),
     ],
     ids=lambda text: repr(text[:24]),
 )

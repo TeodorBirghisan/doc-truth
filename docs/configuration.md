@@ -186,7 +186,7 @@ each key.
 | `telegram-bot-token` | Telegram bot tokens, also inside an `api.telegram.org/bot` URL. |
 | `jwt` | JSON Web Tokens. |
 | `url-password` | The password in `scheme://user:password@host`, up to the last `@` before the host. |
-| `authorization` | The credential after `Authorization:` or `Proxy-Authorization:`, with or without a scheme such as `Bearer` or `Basic` before it. |
+| `authorization` | The value of an `Authorization:` or `Proxy-Authorization:` header, to a closing quote or the end of the line. A scheme word such as `Bearer` or `Basic` stays visible. |
 | `assignment` | The value after a name that ends in `password`, `passwd`, `secret`, `secret_key`, `secret_key_base`, `token`, `api_key`, `access_key` or `private_key`, in any case and with `_`, `-` or nothing between the words, then `=` or `:`. |
 
 `assignment` is the only fuzzy rule, and the one that catches a plain
@@ -196,7 +196,8 @@ password, such as `RESTIC_PASSWORD=…` in a unit's environment or in
 - empty values, `true`, `false`, `yes`, `no`, `on`, `off`, `null`, `none` and
   `nil`;
 - references and placeholders: `${VAR}`, `$(command)`, `<placeholder>` and
-  `{{template}}`;
+  `{{template}}`. A default in `${VAR:-…}` must be empty or another variable;
+  a written-out one is hidden;
 - values that are already hidden: `****` and `REDACTED`.
 
 A bare `$VAR` is hidden, because a password can look like one. A name that
@@ -204,8 +205,10 @@ only contains one of the words, such as `RESTIC_PASSWORD_FILE` or
 `PasswordAuthentication`, doesn't count. A value in quotes is hidden up to the
 closing quote, and so is the value in an assignment quoted whole, such as
 `"PASSWORD=two words"`; a quote escaped with a backslash doesn't end it. A
-value without quotes ends at the first space. `NAME=value`, `NAME = value` and
-`NAME: value` all count, but in `NAME= OTHER=x` the value is empty.
+value without quotes ends at the first space. `NAME=value`, `NAME= value`,
+`NAME = value` and `NAME: value` all count. When an upper-case assignment
+follows a bare `=`, as in `systemctl show`'s `NAME= OTHER=x`, the value is
+empty.
 
 ### Rules of your own and exceptions
 
@@ -279,8 +282,9 @@ or `DB_PASS`, need a pattern of your own. A value without quotes runs to the
 next space, so in `Password=…;User Id=ops` it hides `;User` too: it errs
 toward hiding. A secret in a doc is sent as it is.
 Keep secrets out of probe output in the first place, and read `evidence.md`
-before your first `check`. A false redaction costs one unchecked value; the
-marker names the rule, so an `allow` expression or `disable` fixes it.
+before your first `check`. A false redaction, such as `passwd: files` in
+`/etc/nsswitch.conf`, costs one unchecked value. The marker names the rule, so
+an `allow` expression (`allow = ["files"]`) or `disable` fixes it.
 
 ## Where runs are kept
 
