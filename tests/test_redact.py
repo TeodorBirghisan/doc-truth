@@ -158,6 +158,9 @@ def test_every_built_in_rule_has_a_case_above() -> None:
         ("password= abc=def", "password= [REDACTED:assignment]"),
         ("password= QUJDRA==", "password= [REDACTED:assignment]"),
         ("password= ABCDEF123=", "password= [REDACTED:assignment]"),
+        ("password= K9X=Qz7", "password= [REDACTED:assignment]"),
+        ("password= my_pass=word1", "password= [REDACTED:assignment]"),
+        ("PASSWORD= TZ=UTC", "PASSWORD= [REDACTED:assignment]"),
         (
             "Authorization: Bearer abc123 https://example.org",
             "Authorization: Bearer [REDACTED:authorization]",
@@ -227,6 +230,7 @@ def test_a_rule_with_a_secret_group_hides_only_the_value(text: str, expected: st
         "Authorization: Bearer ${TOKEN}",
         "password= ",
         "Environment=RESTIC_PASSWORD= RESTIC_REPOSITORY=/srv/restic TZ=UTC",
+        "Environment=DB_PASSWORD= API_TOKEN=",
         '"Env": ["DB_PASSWORD=", "USER=admin", "PORT=5432"],',
         "PWD=/home/ops",
         "OLDPWD=/srv",
@@ -246,8 +250,9 @@ def test_near_misses_are_left_alone(text: str) -> None:
         f"GITHUB_TOKEN={GITHUB_TOKEN} https://ops:{PASSWORD}@example.org/",
         f'Environment="RESTIC_PASSWORD={PASSWORD}" TOKEN={JWT} AWS={AWS_KEY}',
         f"{SLACK_TOKEN} {GITLAB_TOKEN} {API_KEY} {TAILSCALE_KEY} /bot{TELEGRAM_TOKEN}/",
+        f'Environment=DB_PASSWORD= GITHUB_TOKEN={GITHUB_TOKEN} PASSWORD= TOKEN="{PASSWORD}"',
     ],
-    ids=["key-and-header", "token-and-url", "environment", "other-tokens"],
+    ids=["key-and-header", "token-and-url", "environment", "other-tokens", "empty-values"],
 )
 def test_hiding_twice_changes_nothing(text: str) -> None:
     once = hidden(text)
@@ -317,6 +322,14 @@ def test_the_body_of_a_key_is_dropped_even_without_its_first_line() -> None:
     redacted = redact_identity(key_identity(*lines), REDACTOR)
 
     assert redacted.evidence == ProbeOutput(probe="keys", lines=frozenset({"mode: 600"}))
+
+
+def test_an_identity_left_with_nothing_but_a_key_keeps_the_marker() -> None:
+    redacted = redact_identity(key_identity(*PEM_BODY.splitlines(), END), REDACTOR)
+
+    assert redacted.evidence == ProbeOutput(
+        probe="keys", lines=frozenset({"[REDACTED:private-key]"})
+    )
 
 
 def test_a_key_is_kept_when_no_rule_hides_keys() -> None:

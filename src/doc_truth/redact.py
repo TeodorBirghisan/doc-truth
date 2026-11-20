@@ -26,7 +26,7 @@ _MARKER = re.compile(r"\[REDACTED:[a-z0-9-]+\]")
 _KEY_EDGE = re.compile(r"-----(?:BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----")
 _KEY_LEFTOVER = re.compile(r"[A-Za-z0-9+/=]+|-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----")
 _SCHEMES = "(?:bearer|basic|token|digest|negotiate|ntlm)"
-_UNLESS_EMPTY = r"(?:[ \t]++(?!(?-i:[A-Z_][A-Z0-9_]*=(?=[^\s=]))))?"
+_UNLESS_EMPTY = r"(?:[ \t]++(?!(?-i:[A-Z][A-Z0-9]*_[A-Z0-9_]*=)))?"
 _AFTER_A_VALUE = "`,;)]}."
 
 
@@ -191,10 +191,12 @@ def redact_identity(identity: Identity, redactor: Redactor) -> Identity:
     if not isinstance(evidence, ProbeOutput):
         return identity
     lines = sorted(evidence.lines)
-    hides_keys = any(rule.spans_lines for rule in redactor.rules)
-    if hides_keys and any(_KEY_EDGE.search(line) for line in lines):
+    key_rules = [rule.name for rule in redactor.rules if rule.spans_lines]
+    if key_rules and any(_KEY_EDGE.search(line) for line in lines):
         # Stored lines have no order, so what's left of a hidden key is recognised by its shape.
-        lines = [line for line in lines if not _KEY_LEFTOVER.fullmatch(line)]
+        lines = [line for line in lines if not _KEY_LEFTOVER.fullmatch(line)] or [
+            marker(key_rules[0])
+        ]
     redacted = frozenset(redactor.redact(line, where="evidence")[0] for line in lines)
     return replace(identity, evidence=replace(evidence, lines=redacted))
 

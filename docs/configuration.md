@@ -206,9 +206,11 @@ only contains one of the words, such as `RESTIC_PASSWORD_FILE` or
 closing quote, and so is the value in an assignment quoted whole, such as
 `"PASSWORD=two words"`; a quote escaped with a backslash doesn't end it. A
 value without quotes ends at the first space. `NAME=value`, `NAME= value`,
-`NAME = value` and `NAME: value` all count. When an upper-case assignment
-follows a bare `=`, as in `systemctl show`'s `NAME= OTHER=x`, the value is
-empty.
+`NAME = value` and `NAME: value` all count. When a bare `=` is followed by an
+upper-case name with an underscore and its own `=`, as in `systemctl show`'s
+`DB_PASSWORD= API_TOKEN=x`, the value is empty. Without an underscore, as in
+`PASSWORD= TZ=UTC`, the next word is hidden as the value: a word that only
+looks like a variable could be the password.
 
 ### Rules of your own and exceptions
 
@@ -258,7 +260,8 @@ twice changes nothing. An earlier finding that quoted a private key drops
 every stored line shaped like the rest of a key (only letters, digits, `+`,
 `/` and `=`), because its lines are stored without their order. A one-word
 line such as `active` goes with them, so such a finding may show as new once,
-and an acknowledgement of it needs `ack` again.
+and an acknowledgement of it needs `ack` again. A finding left with no line
+keeps the marker.
 
 ### What it shows
 
