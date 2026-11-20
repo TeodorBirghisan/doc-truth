@@ -5,8 +5,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from doc_truth.config import Probe
+from doc_truth.redact import Redaction, marker
 
-EVIDENCE_FORMAT = 1
+EVIDENCE_FORMAT = 2
 FAILED_LABEL = "PROBE FAILED"
 FAILED_MARKER = f"{FAILED_LABEL} — not evidence of absence"
 
@@ -25,6 +26,7 @@ class ProbeResult:
     stdout_truncated: bool
     stderr_truncated: bool
     failure: str | None
+    redactions: tuple[Redaction, ...] = ()
 
     @property
     def failed(self) -> bool:
@@ -72,6 +74,13 @@ def evidence_markdown(evidence: Evidence) -> str:
         "usable evidence: nothing can be concluded from it, least of all that something "
         "is missing.",
     ]
+    if any(result.redactions for result in evidence.results):
+        blocks.append(
+            f"Text shown as `{marker('…')}` was hidden by doc-truth before you saw it, because "
+            "it looked like a secret. It shows nothing about the value that was there: never "
+            "report it as a value, and treat a claim that only the hidden text could check as "
+            "unchecked, not contradicted."
+        )
     for result in evidence.results:
         blocks.extend(_probe_blocks(result))
     return "\n\n".join(blocks) + "\n"
@@ -102,6 +111,10 @@ def _probe_json(result: ProbeResult) -> dict[str, object]:
         "duration": round(result.duration, 3),
         "stdout": result.stdout,
         "stderr": result.stderr,
+        "redactions": [
+            {"rule": redaction.rule, "in": redaction.where, "line": redaction.line}
+            for redaction in result.redactions
+        ],
     }
 
 

@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "kind": "contradiction",
+      "title": "The unit keeps 7 daily snapshots, not 14",
+      "doc": {
+        "file": "docs/backups.md",
+        "line": 13,
+        "quote": "`RESTIC_KEEP_DAILY=14`, so the nightly prune keeps two weeks of daily snapshots."
+      },
+      "evidence": {
+        "probe": "backup-unit",
+        "quote": "RESTIC_KEEP_DAILY=7"
+      },
+      "confidence": "confirmed",
+      "fix": "doc",
+      "reason": "The doc says the prune keeps 14 daily snapshots, but the unit's environment sets RESTIC_KEEP_DAILY=7."
+    }
+  ]
+}

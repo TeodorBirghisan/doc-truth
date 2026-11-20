@@ -152,6 +152,128 @@ which must be installed and logged in. `check` starts it with every tool,
 MCP server, hook and skill turned off, so the model can only read the prompt
 and answer it.
 
+## `[redaction]`
+
+Before anything is written or sent, doc-truth hides text in the evidence that
+looks like a secret and shows `[REDACTED:rule]` in its place, naming the rule
+that matched. It looks at everything a probe printed, on standard output and
+standard error, and at the probe's command as the evidence shows it. The
+secret never reaches a run folder, the prompt, the report or the
+known-findings file. Docs and `notes` aren't redacted: you wrote them and
+chose what's in them.
+
+Redaction is on without any configuration. The table is optional, and so is
+each key.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | boolean | `true` | `false` turns redaction off. |
+| `disable` | array of strings | `[]` | Built-in rules to turn off, by name. |
+| `patterns` | array of tables | `[]` | Rules of your own, each with a `name` and a `pattern`. |
+| `allow` | array of strings | `[]` | Regular expressions for values to leave alone. |
+
+### Built-in rules
+
+| Rule | Hides |
+|---|---|
+| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. |
+| `github-token` | GitHub tokens: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` and `github_pat_`. |
+| `gitlab-token` | GitLab personal access tokens, `glpat-`. |
+| `slack-token` | Slack tokens, `xoxb-` and the other `xox` kinds. |
+| `aws-access-key` | AWS access key IDs, `AKIA` and `ASIA`. |
+| `api-key` | API keys in the `sk-` form, with at least 32 characters after `sk-`. |
+| `tailscale-key` | Tailscale keys, `tskey-`. |
+| `telegram-bot-token` | Telegram bot tokens, also inside an `api.telegram.org/bot` URL. |
+| `jwt` | JSON Web Tokens. |
+| `url-password` | The password in `scheme://user:password@host`, up to the last `@` before the host. |
+| `authorization` | The credential after `Authorization:` or `Proxy-Authorization:` and a scheme such as `Bearer` or `Basic`. |
+| `assignment` | The value after a name that ends in `password`, `passwd`, `secret`, `secret_key`, `secret_key_base`, `token`, `api_key`, `access_key` or `private_key`, in any case and with `_`, `-` or nothing between the words, then `=` or `:`. |
+
+`assignment` is the only fuzzy rule, and the one that catches a plain
+password, such as `RESTIC_PASSWORD=…` in a unit's environment or in
+`docker inspect`. It leaves these values alone, because they hold no secret:
+
+- empty values, `true`, `false`, `yes`, `no`, `on`, `off`, `null`, `none` and
+  `nil`;
+- references and placeholders: `${VAR}`, `$(command)`, `<placeholder>` and
+  `{{template}}`;
+- values that are already hidden: `****`, `REDACTED` and doc-truth's own
+  `[REDACTED:…]` markers.
+
+A bare `$VAR` is hidden, because a password can look like one. A name that
+only contains one of the words, such as `RESTIC_PASSWORD_FILE` or
+`PasswordAuthentication`, doesn't count. A value in quotes is hidden up to the
+closing quote, and so is the value in an assignment quoted whole, such as
+`"PASSWORD=two words"`; a quote escaped with a backslash doesn't end it. A
+value without quotes ends at the first space.
+
+### Rules of your own and exceptions
+
+```toml
+[[docs]]
+path = "docs/operations.md"
+
+[[probes]]
+name = "backup-unit"
+command = "systemctl show -p Environment --no-pager restic-backup.service"
+
+[redaction]
+disable = ["jwt"]
+patterns = [
+  { name = "ntfy-token", pattern = 'tk_[a-z0-9]{29}' },
+  { name = "door-pin", pattern = 'pin=(?P<secret>\d+)' },
+]
+allow = ["changeme", 'example-\w+']
+```
+
+- A `pattern` is a
+  [Python regular expression](https://docs.python.org/3/library/re.html#regular-expression-syntax).
+  It hides the whole match, or only the group named `secret` when the pattern
+  has one. Write patterns in single quotes, TOML's literal strings, so
+  backslashes stay as they are.
+- A `name` is 1 to 64 lowercase letters, digits or `-`, and can't be one a
+  built-in rule already uses. The marker shows it: `[REDACTED:door-pin]`.
+- A value is left alone when an `allow` expression matches all of it:
+  `changeme` keeps `token: changeme` but not `token: changeme2`. Exceptions
+  apply to every rule, yours included.
+- A pattern or an exception that doesn't compile, or that matches empty text,
+  is an error. `validate` also says how many rules are on.
+- Patterns are trusted like probe commands: one that backtracks badly can hang
+  the run. The built-in rules are tested against 1 MiB of worst-case output.
+
+### Earlier runs and known findings
+
+`check` reads the previous run's report and the known-findings file through
+the current rules too. A finding recorded before doc-truth had redaction, or
+before you added a rule, still matches its line, now with the marker in it,
+and its secret isn't copied into the new report. The secret is still in the
+old file itself: see [Privacy](../README.md#privacy) in the README.
+
+### What it shows
+
+- When `collect` or `check` hides anything, it says so on standard error:
+  how many values, in how many probes. With `--show-redactions` it lists
+  each one: the probe, `command`, `stdout` or `stderr`, the line it began
+  on, and the rule. It never prints a value. To
+  see one, run the probe by hand.
+- `evidence.json` lists the same for each probe, under `redactions`. When
+  something was hidden, `evidence.md` tells the model that a `[REDACTED:…]`
+  marker says nothing about the value it replaced. When nothing was hidden,
+  `evidence.md` is exactly what it would be without redaction.
+- `report.md` gets a **Hidden values** section with a count for each probe,
+  because claims that only the hidden text could check went unchecked.
+  `report.json` counts them too.
+
+### Limits
+
+Redaction is a net, not a guarantee. It misses a secret in a format no rule
+knows, one split across lines, and one cut in half where a probe's output
+reached its limit. Names that `assignment` doesn't know, such as `MYSQL_PWD`
+or `DB_PASS`, need a pattern of your own. A secret in a doc is sent as it is.
+Keep secrets out of probe output in the first place, and read `evidence.md`
+before your first `check`. A false redaction costs one unchecked value; the
+marker names the rule, so an `allow` expression or `disable` fixes it.
+
 ## Where runs are kept
 
 `doc-truth collect` and `doc-truth check` write each run to a new folder,

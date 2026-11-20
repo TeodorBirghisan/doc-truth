@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from doc_truth.config import ConfigError, DocSource, ModelSettings, Probe, load_config
+from doc_truth.redact import BUILT_IN_NAMES, BUILT_IN_RULES, Redactor
 
 DOCS = """
 [[docs]]
@@ -318,6 +319,182 @@ def test_an_empty_model_table_keeps_the_defaults(write_config: Callable[[str], P
     config = load_config(write_config(DOCS + PROBES + "[model]\n"))
 
     assert config.model == ModelSettings()
+
+
+@pytest.mark.parametrize("table", ["", "[redaction]\n", "[redaction]\nenabled = true\n"])
+def test_redaction_uses_every_built_in_rule_by_default(
+    write_config: Callable[[str], Path], table: str
+) -> None:
+    config = load_config(write_config(DOCS + PROBES + table))
+
+    assert config.redaction == Redactor(rules=BUILT_IN_RULES, allow=())
+
+
+def test_redaction_can_be_turned_off(write_config: Callable[[str], Path]) -> None:
+    text = '[redaction]\nenabled = false\nallow = ["x"]\npatterns = [{ name = "a", pattern = "a" }]'
+
+    config = load_config(write_config(DOCS + PROBES + text))
+
+    assert config.redaction.rules == ()
+
+
+def test_redaction_settings_are_read(write_config: Callable[[str], Path]) -> None:
+    config = load_config(
+        write_config(
+            DOCS
+            + PROBES
+            + """
+            [redaction]
+            disable = ["assignment", "jwt"]
+            patterns = [
+              { name = "ticket", pattern = 'TICKET-\\d+' },
+              { name = "pin", pattern = 'pin=(?P<secret>\\d+)' },
+            ]
+            allow = ["changeme", 'example-\\w+']
+            """
+        )
+    )
+
+    redactor = config.redaction
+    assert [rule.name for rule in redactor.rules] == [
+        *(name for name in BUILT_IN_NAMES if name not in {"assignment", "jwt"}),
+        "ticket",
+        "pin",
+    ]
+    assert [rule.pattern.pattern for rule in redactor.rules[-2:]] == [
+        r"TICKET-\d+",
+        r"pin=(?P<secret>\d+)",
+    ]
+    assert not any(rule.skips_placeholders for rule in redactor.rules[-2:])
+    assert [pattern.pattern for pattern in redactor.allow] == ["changeme", r"example-\w+"]
+    assert redactor.redact("TICKET-7 pin=1234", where="stdout")[0] == (
+        "[REDACTED:ticket] pin=[REDACTED:pin]"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        (
+            "[[redaction]]\nenabled = false",
+            "[[redaction]] must be written [redaction], with single brackets, only once",
+        ),
+        ("redaction = false", "redaction must be a [redaction] table, found a boolean"),
+        (
+            "[redaction]\nenable = false",
+            '[redaction]: unknown key "enable" (did you mean "enabled"?)',
+        ),
+        (
+            '[redaction]\nenabled = "no"',
+            "[redaction]: enabled must be true or false, found a string",
+        ),
+        (
+            '[redaction]\ndisable = "jwt"',
+            "[redaction]: disable must be an array of built-in rule names, found a string",
+        ),
+        (
+            '[redaction]\ndisable = ["asignment"]',
+            '[redaction]: disable names "asignment", which is not a built-in rule '
+            '(did you mean "assignment"?)',
+        ),
+        (
+            '[redaction]\ndisable = ["mine"]',
+            '[redaction]: disable names "mine", which is not a built-in rule',
+        ),
+        (
+            "[redaction]\ndisable = [3]",
+            "[redaction]: disable names an integer, which is not a built-in rule",
+        ),
+        (
+            "[redaction]\npatterns = { name = 'a' }",
+            "[redaction]: patterns must be an array of tables, found a table",
+        ),
+        (
+            "[redaction]\npatterns = ['a']",
+            "[redaction]: patterns #1: must be a table with name and pattern, found a string",
+        ),
+        ("[redaction]\npatterns = [{ name = 'a' }]", "[redaction]: patterns #1: missing pattern"),
+        ("[redaction]\npatterns = [{ pattern = 'a' }]", "[redaction]: patterns #1: missing name"),
+        (
+            "[redaction]\npatterns = [{ name = 'a', pattern = 'a', flags = 'i' }]",
+            '[redaction]: patterns #1: unknown key "flags"',
+        ),
+        (
+            "[redaction]\npatterns = [{ name = 'My Rule', pattern = 'a' }]",
+            '[redaction]: patterns #1: name must be 1 to 64 lowercase letters, digits or "-", '
+            "starting with a letter or digit",
+        ),
+        (
+            "[redaction]\npatterns = [{ name = 'MyRule', pattern = 'a' }]",
+            '[redaction]: patterns #1: name must be 1 to 64 lowercase letters, digits or "-", '
+            "starting with a letter or digit",
+        ),
+        (
+            "[redaction]\npatterns = [{ name = 'my_rule', pattern = 'a' }]",
+            '[redaction]: patterns #1: name must be 1 to 64 lowercase letters, digits or "-", '
+            "starting with a letter or digit",
+        ),
+        (
+            "[redaction]\npatterns = [{ name = 'jwt', pattern = 'a' }]",
+            '[redaction]: patterns #1: name "jwt" is already used by another rule',
+        ),
+        (
+            "[redaction]\npatterns = [{ name = 'a', pattern = 'a' }, { name = 'a', pattern = 'b' }]"
+            "",
+            '[redaction]: patterns #2: name "a" is already used by another rule',
+        ),
+        (
+            "[redaction]\npatterns = [{ name = 'a', pattern = 4 }]",
+            "[redaction]: patterns #1: pattern: must be a regular expression in a string, "
+            "found an integer",
+        ),
+        (
+            "[redaction]\npatterns = [{ name = 'a', pattern = 'x?' }]",
+            "[redaction]: patterns #1: pattern: matches empty text, so it would match everywhere",
+        ),
+        (
+            "[redaction]\nallow = 'x'",
+            "[redaction]: allow must be an array of regular expressions, found a string",
+        ),
+        (
+            "[redaction]\nallow = [1]",
+            "[redaction]: allow #1: must be a regular expression in a string, found an integer",
+        ),
+        (
+            "[redaction]\nallow = ['.*']",
+            "[redaction]: allow #1: matches empty text, so it would match everywhere",
+        ),
+    ],
+)
+def test_redaction_problems(write_config: Callable[[str], Path], text: str, problem: str) -> None:
+    assert problems_in(write_config, text + "\n" + DOCS + PROBES) == (problem,)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[redaction]\nallow = ['(']",
+        "[redaction]\npatterns = [{ name = 'a', pattern = '[a' }]",
+    ],
+)
+def test_a_regular_expression_that_does_not_compile_is_a_problem(
+    write_config: Callable[[str], Path], text: str
+) -> None:
+    (problem,) = problems_in(write_config, DOCS + PROBES + text)
+
+    assert problem.startswith("[redaction]: ")
+    assert ": is not a valid regular expression: " in problem
+
+
+def test_every_redaction_problem_is_reported_even_when_it_is_off(
+    write_config: Callable[[str], Path],
+) -> None:
+    text = "[redaction]\nenabled = false\ndisable = ['nope']\nallow = ['']"
+
+    assert problems_in(write_config, DOCS + PROBES + text) == (
+        '[redaction]: disable names "nope", which is not a built-in rule',
+        "[redaction]: allow #1: matches empty text, so it would match everywhere",
+    )
 
 
 @pytest.mark.parametrize(

@@ -5,12 +5,15 @@ import sys
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fakes import ANSWER, INIT, FakeClaude
 
 from doc_truth import cli
 from doc_truth.cli import main
+from doc_truth.config import known_path, load_config
+from doc_truth.redact import BUILT_IN_RULES
 
 CONFIG = """
 [[docs]]
@@ -55,7 +58,9 @@ def test_validate_lists_the_resolved_docs_and_probes(
         "\n"
         "Probes (2):\n"
         "  uptime          timeout 30s\n"
-        "  backup-service  timeout 2.5s\n",
+        "  backup-service  timeout 2.5s\n"
+        "\n"
+        f"Redaction: {len(BUILT_IN_RULES)} rules.\n",
         "",
     )
 
@@ -422,6 +427,7 @@ def test_check_exits_1_on_a_confirmed_finding(
         "not_rechecked": 0,
         "dropped": 0,
         "failed_probes": 0,
+        "redactions": 0,
     }
     assert err.endswith("\n1 finding: 1 confirmed, 0 suspect.\n")
 
@@ -469,6 +475,7 @@ def test_check_exits_2_when_a_probe_failed_even_with_confirmed_findings(
         "not_rechecked": 0,
         "dropped": 0,
         "failed_probes": 1,
+        "redactions": 0,
     }
     assert err.endswith("\n1 finding: 1 confirmed, 0 suspect. 1 probe failed.\n")
 
@@ -553,3 +560,155 @@ def test_check_writes_to_the_output_dir(
     assert run.parent == tmp_path / "state" / "runs"
     assert (run / "report.md").is_file()
     assert not (tmp_path / ".doc-truth").exists()
+
+
+SECRET_CONFIG = """
+[[docs]]
+path = "docs/*.md"
+
+[[probes]]
+name = "timers"
+command = "echo 'restic-backup.timer *-*-* 03:00:00'"
+
+[[probes]]
+name = "backup-env"
+command = '''
+: https://ops:pw-planted-in-command@example.org/
+echo "$PLANTED_LINE"; echo "$PLANTED_HEADER" >&2'''
+"""
+PLANTED = ("hunter2-planted-in-stdout", "planted-in-stderr", "pw-planted-in-command")
+
+
+@pytest.fixture
+def secret_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_config: Callable[[str], Path]
+) -> Path:
+    monkeypatch.setenv("PLANTED_LINE", f"Environment=RESTIC_PASSWORD={PLANTED[0]}")
+    monkeypatch.setenv("PLANTED_HEADER", f"Authorization: Bearer {PLANTED[1]}")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "operations.md").write_text(OPERATIONS, encoding="utf-8")
+    return write_config(SECRET_CONFIG)
+
+
+def test_collect_says_how_many_values_it_hid(
+    capsys: pytest.CaptureFixture[str], secret_setup: Path
+) -> None:
+    assert main(["collect", "-c", str(secret_setup)]) == 0
+
+    assert capsys.readouterr().err.endswith(
+        "Probes: 2 ok, 0 failed.\n"
+        "Hid 3 values that looked like secrets in the evidence of 1 probe; "
+        "--show-redactions lists them.\n"
+    )
+
+
+def test_show_redactions_lists_where_each_value_was_hidden(
+    capsys: pytest.CaptureFixture[str], secret_setup: Path
+) -> None:
+    assert main(["collect", "--show-redactions", "-c", str(secret_setup)]) == 0
+
+    assert capsys.readouterr().err.endswith(
+        "Probes: 2 ok, 0 failed.\n"
+        "Hid 3 values that looked like secrets in the evidence of 1 probe:\n"
+        "  backup-env  command line 1  url-password\n"
+        "  backup-env  stdout line 1  assignment\n"
+        "  backup-env  stderr line 1  authorization\n"
+    )
+
+
+def test_one_hidden_value_is_counted_in_the_singular(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, secret_setup: Path
+) -> None:
+    monkeypatch.setenv("PLANTED_LINE", "")
+    monkeypatch.setenv("PLANTED_HEADER", "")
+
+    assert main(["collect", "-c", str(secret_setup)]) == 0
+
+    assert "\nHid 1 value that looked like a secret in the evidence of 1 probe; " in (
+        capsys.readouterr().err
+    )
+
+
+def test_a_planted_secret_reaches_no_file_no_prompt_and_no_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    secret_setup: Path,
+    fake_claude: FakeClaude,
+) -> None:
+    quoted = {
+        **check_finding(),
+        "evidence": {"probe": "backup-env", "quote": "RESTIC_PASSWORD=[REDACTED:assignment]"},
+    }
+    answer_with(fake_claude, quoted)
+
+    assert main(["check", "--show-redactions", "-c", str(secret_setup)]) == 1
+    run = run_folder(capsys.readouterr().out)
+    report = json.loads((run / "report.json").read_text(encoding="utf-8"))
+    (identifier,) = (finding["id"] for finding in report["findings"])
+    assert main(["ack", identifier, "--reason", "Known.", "-c", str(secret_setup)]) == 0
+
+    written = {
+        path: path.read_text(encoding="utf-8")
+        for path in tmp_path.rglob("*")
+        if path.is_file() and path != secret_setup
+    }
+    (call,) = fake_claude.calls()
+    output = "".join(capsys.readouterr())
+    assert report["counts"]["redactions"] == 3
+    assert "RESTIC_PASSWORD=[REDACTED:assignment]" in written[known_path(load_config(secret_setup))]
+    for secret in PLANTED:
+        assert not [path for path, text in written.items() if secret in text]
+        assert secret not in call["stdin"]
+        assert secret not in output
+
+
+def test_validate_says_how_many_redaction_rules_are_on(
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+    touch: Callable[..., None],
+) -> None:
+    touch("docs/a.md")
+    names = ", ".join(f'"{rule.name}"' for rule in BUILT_IN_RULES)
+    one = f'[redaction]\ndisable = [{names}]\npatterns = [{{ name = "pin", pattern = "pin" }}]\n'
+
+    main(["validate", "-c", str(write_config(CONFIG + one))])
+    assert capsys.readouterr().out.endswith("\nRedaction: 1 rule.\n")
+    main(["validate", "-c", str(write_config(CONFIG + "[redaction]\nenabled = false\n"))])
+    assert capsys.readouterr().out.endswith("\nRedaction: off.\n")
+
+
+@pytest.mark.parametrize("acknowledged", [False, True])
+def test_a_finding_from_before_redaction_keeps_its_place_without_its_secret(
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+    secret_setup: Path,
+    fake_claude: FakeClaude,
+    acknowledged: bool,
+) -> None:
+    def finding_quoting(line: str) -> dict[str, object]:
+        return {**check_finding(), "evidence": {"probe": "backup-env", "quote": line}}
+
+    write_config(SECRET_CONFIG + "\n[redaction]\nenabled = false\n")
+    answer_with(fake_claude, finding_quoting(f"RESTIC_PASSWORD={PLANTED[0]}"))
+    assert main(["check", "-c", str(secret_setup)]) == 1
+    first = run_folder(capsys.readouterr().out)
+    if acknowledged:
+        (identifier,) = (item["id"] for item in report_of(first)["findings"])
+        assert main(["ack", identifier, "--reason", "Known.", "-c", str(secret_setup)]) == 0
+        capsys.readouterr()
+
+    write_config(SECRET_CONFIG)
+    answer_with(fake_claude, finding_quoting("RESTIC_PASSWORD=[REDACTED:assignment]"))
+    code = main(["check", "-c", str(secret_setup)])
+
+    second = run_folder(capsys.readouterr().out)
+    counts = report_counts(second)
+    assert (code, counts["acknowledged"], counts["new"]) == (
+        (0, 1, 0) if acknowledged else (1, 0, 0)
+    )
+    assert not [path for path in second.iterdir() if PLANTED[0] in path.read_text(encoding="utf-8")]
+
+
+def report_of(run: Path) -> dict[str, Any]:
+    report: dict[str, Any] = json.loads((run / "report.json").read_text(encoding="utf-8"))
+    return report

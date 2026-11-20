@@ -1,0 +1,13 @@
+[[results]]
+probe = "backup-unit"
+exit-code = 0
+stdout = '''
+Environment=RESTIC_REPOSITORY=/mnt/backup/restic RESTIC_PASSWORD=oak-river-lamp-42 RESTIC_KEEP_DAILY=7
+'''
+
+[[results]]
+probe = "backup-timer"
+exit-code = 0
+stdout = '''
+{ OnCalendar=*-*-* 03:00:00 ; next_elapse=Sun 2026-10-04 03:00:00 CEST }
+'''

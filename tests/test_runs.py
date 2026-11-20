@@ -12,7 +12,9 @@ import pytest
 from doc_truth import runs as runs_module
 from doc_truth.config import Config, Probe
 from doc_truth.evidence import Evidence, ProbeResult, evidence_json, evidence_markdown
-from doc_truth.report import Report, report_json, report_markdown
+from doc_truth.findings import ProbeOutput
+from doc_truth.known import Earlier, Remembered
+from doc_truth.report import REPORT_FORMAT, Report, report_json, report_markdown
 from doc_truth.runs import (
     RunsError,
     latest_report,
@@ -561,9 +563,25 @@ def test_a_report_in_the_format_before_this_one_is_still_the_previous_report(
 def test_a_report_in_a_format_after_this_one_means_no_previous_report(
     tmp_path: Path, config_at_etc: Config
 ) -> None:
-    write_report_file(tmp_path / "20261026T080000Z", format=4, findings=[earlier_entry("newer")])
+    write_report_file(
+        tmp_path / "20261026T080000Z", format=REPORT_FORMAT + 1, findings=[earlier_entry("newer")]
+    )
 
     assert latest_report(tmp_path, config_at_etc) is None
+
+
+@pytest.mark.parametrize("earlier_format", [3, REPORT_FORMAT])
+def test_a_report_in_this_format_or_the_one_before_is_the_previous_run(
+    tmp_path: Path, config_at_etc: Config, earlier_format: int
+) -> None:
+    write_report_file(
+        tmp_path / "20261026T080000Z", format=earlier_format, findings=[earlier_entry("open")]
+    )
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    assert [item.id for item in previous.findings] == ["open"]
 
 
 def test_a_finding_in_the_previous_report_was_last_reported_in_that_run(
@@ -624,3 +642,46 @@ def test_malformed_remembered_findings_are_an_error(
         f"cannot read {tmp_path / '20261026T080000Z' / 'report.json'}: "
         "its findings aren't in the expected form"
     )
+
+
+def secret_entry(id_: str) -> dict[str, object]:
+    entry = earlier_entry(id_)
+    identity = entry["identity"]
+    assert isinstance(identity, dict)
+    return {
+        **entry,
+        "title": "token: hunter2-in-a-title",
+        "identity": {**identity, "evidence": {"probe": "env", "lines": ["DB_PASSWORD=hunter2"]}},
+    }
+
+
+def test_an_earlier_report_is_read_through_the_current_redaction(
+    tmp_path: Path, config_at_etc: Config
+) -> None:
+    remembered = {
+        **remembered_entry("gone"),
+        "title": secret_entry("gone")["title"],
+        "identity": secret_entry("gone")["identity"],
+    }
+    write_report_file(
+        tmp_path / "20261026T080000Z",
+        findings=[secret_entry("open")],
+        not_rechecked=[secret_entry("waiting")],
+        no_longer_reported=[secret_entry("fixed")],
+        remembered=[remembered],
+    )
+
+    previous = latest_report(tmp_path, config_at_etc)
+
+    assert previous is not None
+    items: list[Earlier | Remembered] = [
+        *previous.findings,
+        *previous.no_longer_reported,
+        *previous.remembered,
+    ]
+    assert [item.id for item in items] == ["open", "waiting", "fixed", "gone"]
+    for item in items:
+        assert item.title == "token: [REDACTED:assignment]"
+        assert item.identity.evidence == ProbeOutput(
+            probe="env", lines=frozenset({"DB_PASSWORD=[REDACTED:assignment]"})
+        )

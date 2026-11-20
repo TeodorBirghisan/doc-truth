@@ -1,0 +1,11 @@
+[[docs]]
+path = "docs/*.md"
+
+[[probes]]
+name = "backup-unit"
+command = "systemctl show -p Environment --no-pager restic-backup.service"
+notes = "The environment restic-backup.service runs with."
+
+[[probes]]
+name = "backup-timer"
+command = "systemctl show -p TimersCalendar --value restic-backup.timer"

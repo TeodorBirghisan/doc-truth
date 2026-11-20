@@ -40,11 +40,34 @@ def test_the_suite_has_the_agreed_cases() -> None:
         "omission-claimed-complete",
         "omission-not-claimed",
         "other-host-path",
+        "redacted-value",
         "spelling-and-rounding",
         "stale-status",
         "timeshift-cron-contradiction",
         "value-in-passing",
     ]
+
+
+def test_case_evidence_goes_through_the_same_redaction_as_collect() -> None:
+    case = load_case(CASES_DIR / "redacted-value")
+
+    markdown = evidence_markdown(case.evidence)
+
+    assert "oak-river-lamp-42" in (CASES_DIR / "redacted-value" / "evidence.toml").read_text(
+        encoding="utf-8"
+    )
+    assert "oak-river-lamp-42" not in markdown
+    assert "RESTIC_PASSWORD=[REDACTED:assignment] RESTIC_KEEP_DAILY=7" in markdown
+
+
+def test_only_the_redaction_case_hides_anything() -> None:
+    hiding = [
+        name
+        for name in CASE_NAMES
+        if any(result.redactions for result in load_case(CASES_DIR / name).evidence.results)
+    ]
+
+    assert hiding == ["redacted-value"]
 
 
 def test_the_readme_describes_every_case() -> None:

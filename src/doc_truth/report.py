@@ -27,7 +27,7 @@ from doc_truth.known import (
 from doc_truth.model import Answer
 from doc_truth.verify import Dropped
 
-REPORT_FORMAT = 3
+REPORT_FORMAT = 4
 
 _KINDS = {
     Kind.CONTRADICTION: "Contradiction",
@@ -68,6 +68,14 @@ class Report:
     @property
     def failed_probes(self) -> tuple[ProbeResult, ...]:
         return tuple(result for result in self.evidence.results if result.failed)
+
+    @property
+    def redacted_probes(self) -> tuple[ProbeResult, ...]:
+        return tuple(result for result in self.evidence.results if result.redactions)
+
+    @property
+    def redactions(self) -> int:
+        return sum(len(result.redactions) for result in self.evidence.results)
 
     def _in_doc_order(self, confidence: Confidence) -> tuple[Tracked, ...]:
         return self._sorted(
@@ -139,6 +147,19 @@ def report_markdown(report: Report) -> str:
             "\n".join(
                 f"- {code_span(result.probe.name)}: {result.failure}"
                 for result in report.failed_probes
+            )
+        )
+    if report.redacted_probes:
+        blocks.append("## Hidden values")
+        blocks.append(
+            "Text in these probes' evidence looked like a secret, so doc-truth hid it before "
+            "the model saw it. Claims that only the hidden text could check went unchecked."
+        )
+        blocks.append(
+            "\n".join(
+                f"- {code_span(result.probe.name)}: {_count(len(result.redactions), 'value')} "
+                f"({', '.join(_rules(result))})"
+                for result in report.redacted_probes
             )
         )
     if report.dropped:
@@ -283,6 +304,7 @@ def report_json(report: Report) -> str:
             "not_rechecked": len(report.not_rechecked),
             "dropped": len(report.dropped),
             "failed_probes": len(report.failed_probes),
+            "redactions": report.redactions,
         },
         "model": {
             "requested": report.requested_model,
@@ -292,6 +314,10 @@ def report_json(report: Report) -> str:
         "failed_probes": [
             {"name": result.probe.name, "failure": result.failure}
             for result in report.failed_probes
+        ],
+        "redactions": [
+            {"probe": result.probe.name, "count": len(result.redactions), "rules": _rules(result)}
+            for result in report.redacted_probes
         ],
         "findings": [
             _tracked_json(item)
@@ -330,6 +356,8 @@ def _summary_parts(report: Report) -> list[str]:
         parts.append(f"{_count(len(report.failed_probes), 'probe')} failed.")
     if report.dropped:
         parts.append(f"{_count(len(report.dropped), 'finding')} dropped.")
+    if report.redactions:
+        parts.append(f"{_count(report.redactions, 'value')} hidden.")
     return parts
 
 
@@ -365,6 +393,10 @@ def _checked(report: Report) -> str:
         f"${cost:.2f} as reported by Claude Code)."
         f"{compared}"
     )
+
+
+def _rules(result: ProbeResult) -> list[str]:
+    return sorted({redaction.rule for redaction in result.redactions})
 
 
 def _evidence_markdown(evidence: ProbeQuote | DocQuote) -> list[str]:

@@ -2110,3 +2110,20 @@ def test_a_remembered_acknowledgement_that_was_never_open_loads() -> None:
     entry = {**VALID_REMEMBERED, "runs_open": 0}
 
     assert remembered_from_json(entry).runs_open == 0
+
+
+def test_a_known_entry_is_read_through_the_current_redaction(tmp_path: Path) -> None:
+    write_known(
+        tmp_path,
+        VALID_ENTRY.replace('"A title"', '"token: hunter2-in-a-title"').replace(
+            '"A quote."', '"DB_PASSWORD=hunter2"'
+        ),
+    )
+
+    (entry,) = load_known(config_in(tmp_path))
+
+    assert entry.title == "token: [REDACTED:assignment]"
+    assert entry.identity.evidence == ProbeOutput(
+        probe="timers", lines=frozenset({"DB_PASSWORD=[REDACTED:assignment]"})
+    )
+    assert entry.identity.doc.lines == frozenset({"A line."})

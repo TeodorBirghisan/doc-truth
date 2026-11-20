@@ -13,6 +13,7 @@ from doc_truth.evidence import (
     evidence_markdown,
     format_size,
 )
+from doc_truth.redact import Redaction
 
 GOLDEN = Path(__file__).parent / "golden"
 EEST = timezone(timedelta(hours=3))
@@ -32,6 +33,7 @@ def result(
     stdout_truncated: bool = False,
     stderr_truncated: bool = False,
     failure: str | None = None,
+    redactions: tuple[Redaction, ...] = (),
 ) -> ProbeResult:
     return ProbeResult(
         probe=Probe(
@@ -50,6 +52,7 @@ def result(
         stdout_truncated=stdout_truncated,
         stderr_truncated=stderr_truncated,
         failure=failure,
+        redactions=redactions,
     )
 
 
@@ -114,6 +117,37 @@ def test_the_markdown_is_what_the_model_will_see() -> None:
     assert markdown == (GOLDEN / "evidence.md").read_text(encoding="utf-8")
 
 
+HIDDEN = result(
+    "backup-unit",
+    "systemctl show -p Environment restic-backup.service",
+    stdout="Environment=RESTIC_REPOSITORY=/srv/restic RESTIC_PASSWORD=[REDACTED:assignment]\n",
+    stderr="Authorization: Bearer [REDACTED:authorization]\n",
+    redactions=(
+        Redaction(rule="assignment", where="stdout", line=1),
+        Redaction(rule="authorization", where="stderr", line=1),
+    ),
+)
+
+
+def test_the_markdown_tells_the_model_when_values_were_hidden() -> None:
+    markdown = evidence_markdown(evidence(SUCCESS, HIDDEN))
+
+    assert markdown == (GOLDEN / "evidence-redacted.md").read_text(encoding="utf-8")
+
+
+def test_the_markdown_says_nothing_about_hiding_when_nothing_was_hidden() -> None:
+    assert "REDACTED" not in evidence_markdown(evidence(SUCCESS, FAILURE))
+
+
+def test_the_json_lists_each_hidden_value_without_the_value() -> None:
+    data = json.loads(evidence_json(evidence(HIDDEN)))
+
+    assert data["probes"][0]["redactions"] == [
+        {"rule": "assignment", "in": "stdout", "line": 1},
+        {"rule": "authorization", "in": "stderr", "line": 1},
+    ]
+
+
 def test_cut_off_output_is_shown_even_when_nothing_was_kept() -> None:
     markdown = evidence_markdown(
         evidence(result("quiet", "true", stdout_truncated=True, stderr_truncated=True))
@@ -128,7 +162,7 @@ def test_the_json_has_every_detail_for_scripts() -> None:
     data = json.loads(evidence_json(evidence(SUCCESS, FAILURE)))
 
     assert data == {
-        "format": 1,
+        "format": 2,
         "doc_truth_version": "0.1.0",
         "host": "homeserver",
         "user": "ops",
@@ -154,6 +188,7 @@ def test_the_json_has_every_detail_for_scripts() -> None:
                 "duration": 0.123,
                 "stdout": "restic-backup.timer  *-*-* 03:00:00\n",
                 "stderr": "",
+                "redactions": [],
             },
             {
                 "name": "user-timers",
@@ -171,6 +206,7 @@ def test_the_json_has_every_detail_for_scripts() -> None:
                 "duration": 0.123,
                 "stdout": "",
                 "stderr": "Failed to connect to bus: No medium found\n",
+                "redactions": [],
             },
         ],
     }

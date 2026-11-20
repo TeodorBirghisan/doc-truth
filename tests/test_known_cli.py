@@ -868,7 +868,7 @@ def test_validate_lists_known_findings(
 
     assert main(["validate", "-c", str(config)]) == 0
 
-    assert capsys.readouterr().out.endswith(f"\nKnown findings (1):\n  {identifier}  {TITLE}\n")
+    assert f"\nKnown findings (1):\n  {identifier}  {TITLE}\n\n" in capsys.readouterr().out
 
 
 def test_validate_says_nothing_about_known_findings_when_there_are_none(

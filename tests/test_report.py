@@ -31,6 +31,7 @@ from doc_truth.known import (
     remembered_json,
 )
 from doc_truth.model import Answer
+from doc_truth.redact import Redaction
 from doc_truth.report import Report, report_json, report_markdown, summary
 from doc_truth.verify import Dropped
 
@@ -38,7 +39,9 @@ GOLDEN = Path(__file__).parent / "golden"
 EEST = timezone(timedelta(hours=3))
 
 
-def probe_result(name: str, *, failure: str | None = None) -> ProbeResult:
+def probe_result(
+    name: str, *, failure: str | None = None, redactions: tuple[Redaction, ...] = ()
+) -> ProbeResult:
     return ProbeResult(
         probe=Probe(
             name=name, command="true", timeout=30.0, success_exit_codes=frozenset({0}), notes=None
@@ -52,6 +55,7 @@ def probe_result(name: str, *, failure: str | None = None) -> ProbeResult:
         stdout_truncated=False,
         stderr_truncated=False,
         failure=failure,
+        redactions=redactions,
     )
 
 
@@ -415,6 +419,62 @@ def test_the_summary_only_counts_new_findings_when_there_is_a_run_to_compare_wit
     assert summary(clean) == "No findings."
 
 
+HIDING = evidence(
+    probe_result("systemd-timers"),
+    probe_result(
+        "backup-unit",
+        redactions=(
+            Redaction(rule="authorization", where="stdout", line=1),
+            Redaction(rule="assignment", where="stdout", line=4),
+            Redaction(rule="assignment", where="stderr", line=1),
+        ),
+    ),
+    probe_result(
+        "docker-env",
+        failure="timed out after 30s",
+        redactions=(Redaction(rule="assignment", where="command", line=1),),
+    ),
+)
+
+
+def test_hidden_values_are_counted_per_probe_and_never_shown() -> None:
+    markdown = report_markdown(small_report(collected=HIDING))
+
+    assert markdown.endswith(
+        "## Hidden values\n"
+        "\n"
+        "Text in these probes' evidence looked like a secret, so doc-truth hid it before the "
+        "model saw it. Claims that only the hidden text could check went unchecked.\n"
+        "\n"
+        "- `backup-unit`: 3 values (assignment, authorization)\n"
+        "- `docker-env`: 1 value (assignment)\n"
+        "\n"
+        "## Docs checked\n"
+        "\n"
+        "- `docs/operations.md`\n"
+    )
+    assert markdown.index("## Failed probes") < markdown.index("## Hidden values")
+
+
+def test_the_summary_counts_hidden_values_last() -> None:
+    assert summary(small_report(collected=HIDING)) == (
+        "No findings. 1 probe failed. 4 values hidden."
+    )
+    assert summary(small_report(collected=evidence(HIDING.results[2]))) == (
+        "No findings. 1 probe failed. 1 value hidden."
+    )
+
+
+def test_the_json_report_counts_hidden_values() -> None:
+    data = json.loads(report_json(small_report(collected=HIDING)))
+
+    assert data["counts"]["redactions"] == 4
+    assert data["redactions"] == [
+        {"probe": "backup-unit", "count": 3, "rules": ["assignment", "authorization"]},
+        {"probe": "docker-env", "count": 1, "rules": ["assignment"]},
+    ]
+
+
 def test_an_acknowledged_finding_leaves_the_counts_and_shows_its_reason() -> None:
     report = replace(
         small_report(), findings=(tracked(SNAPSHOTS, acknowledgement=SNAPSHOTS_KNOWN),)
@@ -466,7 +526,7 @@ def test_the_json_report() -> None:
     data = json.loads(report_json(full_report()))
 
     assert data == {
-        "format": 3,
+        "format": 4,
         "doc_truth_version": "0.1.0",
         "prompt_version": 1,
         "host": "homeserver",
@@ -484,6 +544,7 @@ def test_the_json_report() -> None:
             "not_rechecked": 2,
             "dropped": 2,
             "failed_probes": 2,
+            "redactions": 0,
         },
         "model": {
             "requested": "sonnet",
@@ -509,6 +570,7 @@ def test_the_json_report() -> None:
             {"name": "user-timers", "failure": "exit code 1 is not in success-exit-codes [0]"},
             {"name": "sitemap", "failure": "timed out after 15s"},
         ],
+        "redactions": [],
         "findings": [
             {
                 **tracking_json(BACKUP),

@@ -100,6 +100,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_config_argument(collect)
     _add_output_dir_argument(collect)
+    _add_show_redactions_argument(collect)
     check = commands.add_parser(
         "check",
         help="compare the docs with fresh evidence and write a report",
@@ -113,6 +114,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_config_argument(check)
     _add_output_dir_argument(check)
+    _add_show_redactions_argument(check)
     ack = commands.add_parser(
         "ack",
         help="record a finding from the latest report as known, with a reason",
@@ -159,6 +161,14 @@ def _add_output_dir_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_show_redactions_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--show-redactions",
+        action="store_true",
+        help="list where text that looked like a secret was hidden, and by which rule",
+    )
+
+
 def _validate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     docs = resolve_docs(config)
@@ -178,13 +188,18 @@ def _validate(args: argparse.Namespace) -> int:
         print(f"Known findings ({len(known)}):")
         for acknowledgement in known:
             print(f"  {acknowledgement.id}  {one_line(acknowledgement.title)}")
+    print()
+    rules = len(config.redaction.rules)
+    print(
+        f"Redaction: {rules} {'rule' if rules == 1 else 'rules'}." if rules else "Redaction: off."
+    )
     return 0
 
 
 def _collect(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     runs = prepare_runs_dir(config, args.output_dir)
-    evidence = _run_probes(config)
+    evidence = _run_probes(config, show_redactions=args.show_redactions)
     print(write_run(evidence, runs))
     return 2 if any(result.failed for result in evidence.results) else 0
 
@@ -195,7 +210,7 @@ def _check(args: argparse.Namespace) -> int:
     docs = read_docs(resolve_docs(config))
     runs = prepare_runs_dir(config, args.output_dir)
     previous = _previous_report(runs, config)
-    evidence = _run_probes(config)
+    evidence = _run_probes(config, show_redactions=args.show_redactions)
     run = write_run(evidence, runs)
     print(run, flush=True)
     prompt = build_prompt(docs, evidence_markdown(evidence))
@@ -278,7 +293,7 @@ def _ack(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_probes(config: Config) -> Evidence:
+def _run_probes(config: Config, *, show_redactions: bool) -> Evidence:
     total = len(config.probes)
     name_width = max(len(probe.name) for probe in config.probes)
     finished = 0
@@ -298,7 +313,37 @@ def _run_probes(config: Config) -> Evidence:
     evidence = collect(config, tool_version=_version(), on_result=progress)
     failed = sum(result.failed for result in evidence.results)
     print(f"Probes: {total - failed} ok, {failed} failed.", file=sys.stderr, flush=True)
+    _print_redactions(evidence, name_width, listed=show_redactions)
     return evidence
+
+
+def _print_redactions(evidence: Evidence, name_width: int, *, listed: bool) -> None:
+    redacted = [result for result in evidence.results if result.redactions]
+    if not redacted:
+        return
+    hidden = sum(len(result.redactions) for result in redacted)
+    values = (
+        "1 value that looked like a secret"
+        if hidden == 1
+        else f"{hidden} values that looked like secrets"
+    )
+    probes = "1 probe" if len(redacted) == 1 else f"{len(redacted)} probes"
+    ending = ":" if listed else "; --show-redactions lists them."
+    print(
+        f"Hid {values} in the evidence of {probes}{ending}",
+        file=sys.stderr,
+        flush=True,
+    )
+    if not listed:
+        return
+    for result in redacted:
+        for redaction in result.redactions:
+            print(
+                f"  {result.probe.name:<{name_width}}  {redaction.where} line {redaction.line}  "
+                f"{redaction.rule}",
+                file=sys.stderr,
+                flush=True,
+            )
 
 
 def _version() -> str:

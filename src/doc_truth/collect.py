@@ -8,12 +8,13 @@ import subprocess
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from doc_truth.config import Config, Probe
 from doc_truth.evidence import Evidence, ProbeResult, format_size
+from doc_truth.redact import Redactor
 
 LOCALE = "C.UTF-8"
 REMOVED_VARIABLES = ("LANGUAGE", "BASH_ENV")
@@ -58,7 +59,10 @@ def collect(
     local = started_at.astimezone()
     results: list[ProbeResult] = []
     for probe in config.probes:
-        result = run_probe(probe, shell=shell, cwd=config.base_dir, environment=environment)
+        result = redact_result(
+            run_probe(probe, shell=shell, cwd=config.base_dir, environment=environment),
+            config.redaction,
+        )
         results.append(result)
         if on_result is not None:
             on_result(result)
@@ -130,6 +134,19 @@ def run_probe(
         duration=time.monotonic() - started,
         returncode=process.returncode,
         timed_out=timed_out,
+    )
+
+
+def redact_result(result: ProbeResult, redactor: Redactor) -> ProbeResult:
+    command, in_command = redactor.redact(result.probe.command, where="command")
+    stdout, in_stdout = redactor.redact(result.stdout, where="stdout")
+    stderr, in_stderr = redactor.redact(result.stderr, where="stderr")
+    return replace(
+        result,
+        probe=replace(result.probe, command=command),
+        stdout=stdout,
+        stderr=stderr,
+        redactions=(*in_command, *in_stdout, *in_stderr),
     )
 
 
