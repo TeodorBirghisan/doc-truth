@@ -422,8 +422,8 @@ the probes again, so output that changes between runs can differ; the
 `evidence.md` in its own run folder is exactly what it sent.
 
 doc-truth hides text in probe output that looks like a secret before it
-writes or sends anything: private keys, common token formats, passwords in
-URLs and `Authorization` headers, and values such as `RESTIC_PASSWORD=…`.
+writes or sends anything: PEM private keys, common token formats, passwords
+in URLs and `Authorization` headers, and values such as `RESTIC_PASSWORD=…`.
 The [configuration reference](docs/configuration.md#redaction) lists the
 rules and how to add your own. It's a net, not a guarantee: a secret in a
 format no rule knows, or split across lines, gets through, and docs are sent

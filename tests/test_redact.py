@@ -117,6 +117,10 @@ def test_every_built_in_rule_has_a_case_above() -> None:
             'Environment="SMTP_PASSWD=[REDACTED:assignment]" TZ=UTC',
         ),
         (
+            'Environment=DB_PASSWORD= "API_TOKEN=a b" TZ=UTC',
+            'Environment=DB_PASSWORD= "API_TOKEN=[REDACTED:assignment]" TZ=UTC',
+        ),
+        (
             '"Env": ["POSTGRES_PASSWORD=it\'s ok", "TZ=UTC"]',
             '"Env": ["POSTGRES_PASSWORD=[REDACTED:assignment]", "TZ=UTC"]',
         ),
@@ -231,6 +235,8 @@ def test_a_rule_with_a_secret_group_hides_only_the_value(text: str, expected: st
         "password= ",
         "Environment=RESTIC_PASSWORD= RESTIC_REPOSITORY=/srv/restic TZ=UTC",
         "Environment=DB_PASSWORD= API_TOKEN=",
+        'Environment=RESTIC_PASSWORD= "RESTIC_FORGET_ARGS=--keep-daily 7" TZ=UTC',
+        "RESTIC_PASSWORD= 'RESTIC_FORGET_ARGS=--keep-daily 7'",
         '"Env": ["DB_PASSWORD=", "USER=admin", "PORT=5432"],',
         "PWD=/home/ops",
         "OLDPWD=/srv",
@@ -250,7 +256,8 @@ def test_near_misses_are_left_alone(text: str) -> None:
         f"GITHUB_TOKEN={GITHUB_TOKEN} https://ops:{PASSWORD}@example.org/",
         f'Environment="RESTIC_PASSWORD={PASSWORD}" TOKEN={JWT} AWS={AWS_KEY}',
         f"{SLACK_TOKEN} {GITLAB_TOKEN} {API_KEY} {TAILSCALE_KEY} /bot{TELEGRAM_TOKEN}/",
-        f'Environment=DB_PASSWORD= GITHUB_TOKEN={GITHUB_TOKEN} PASSWORD= TOKEN="{PASSWORD}"',
+        f'Environment=DB_PASSWORD= GITHUB_TOKEN={GITHUB_TOKEN} PASSWORD= TOKEN="{PASSWORD}"'
+        f' SMTP_PASSWORD= "API_TOKEN={PASSWORD} x"',
     ],
     ids=["key-and-header", "token-and-url", "environment", "other-tokens", "empty-values"],
 )
