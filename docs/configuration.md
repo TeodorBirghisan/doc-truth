@@ -254,9 +254,11 @@ and its secret isn't copied into the new report. The secret is still in the
 old file itself: see [Privacy](../README.md#privacy) in the README.
 
 No rule, yours included, matches inside a `[REDACTED:…]` marker, so hiding
-twice changes nothing. An earlier finding that quoted a private key keeps only
-the marker for its evidence, because its lines are stored without their
-order and the key's other lines can't be told apart.
+twice changes nothing. An earlier finding that quoted a private key drops
+every stored line shaped like the rest of a key (only letters, digits, `+`,
+`/` and `=`), because its lines are stored without their order. A one-word
+line such as `active` goes with them, so such a finding may show as new once,
+and an acknowledgement of it needs `ack` again.
 
 ### What it shows
 

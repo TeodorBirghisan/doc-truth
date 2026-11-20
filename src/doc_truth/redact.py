@@ -13,7 +13,8 @@ _NOT_A_SECRET = re.compile(
     r"""(?ix)
     ["']?
     (?: true | false | yes | no | on | off | null | none | nil
-      | \$\{ [A-Za-z_][A-Za-z0-9_]* (?: :? [-=?+] (?: \$\{? [A-Za-z_][A-Za-z0-9_]* \}? )? )? \}
+      | \$\{ [A-Za-z_][A-Za-z0-9_]*
+        (?: :? [-=+] (?: \$\{? [A-Za-z_][A-Za-z0-9_]* \}? )? | :? \? [^}]* )? \}
       | \$\( [^)]* \) | < [^>]* > | \{\{ [^}]* \}\}
       | \*+ | redacted
     )?
@@ -25,7 +26,7 @@ _MARKER = re.compile(r"\[REDACTED:[a-z0-9-]+\]")
 _KEY_EDGE = re.compile(r"-----(?:BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----")
 _KEY_LEFTOVER = re.compile(r"[A-Za-z0-9+/=]+|-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----")
 _SCHEMES = "(?:bearer|basic|token|digest|negotiate|ntlm)"
-_UNLESS_EMPTY = r"(?:[ \t]++(?!(?-i:[A-Z_][A-Z0-9_]*=(?!=))))?"
+_UNLESS_EMPTY = r"(?:[ \t]++(?!(?-i:[A-Z_][A-Z0-9_]*=(?=[^\s=]))))?"
 _AFTER_A_VALUE = "`,;)]}."
 
 

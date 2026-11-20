@@ -157,6 +157,11 @@ def test_every_built_in_rule_has_a_case_above() -> None:
         ("password= dGVzdA==", "password= [REDACTED:assignment]"),
         ("password= abc=def", "password= [REDACTED:assignment]"),
         ("password= QUJDRA==", "password= [REDACTED:assignment]"),
+        ("password= ABCDEF123=", "password= [REDACTED:assignment]"),
+        (
+            "Authorization: Bearer abc123 https://example.org",
+            "Authorization: Bearer [REDACTED:authorization]",
+        ),
         (
             'export RESTIC_PASSWORD="${RESTIC_PASSWORD:-hunter2}"',
             "export RESTIC_PASSWORD=[REDACTED:assignment]",
@@ -218,6 +223,7 @@ def test_a_rule_with_a_secret_group_hides_only_the_value(text: str, expected: st
         "Authorization: basic",
         "PASSWORD=${RESTIC_PASSWORD:-$FALLBACK}",
         "PASSWORD=${RESTIC_PASSWORD:?}",
+        "password=${PW:?unset}",
         "Authorization: Bearer ${TOKEN}",
         "password= ",
         "Environment=RESTIC_PASSWORD= RESTIC_REPOSITORY=/srv/restic TZ=UTC",
