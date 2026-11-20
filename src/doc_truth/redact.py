@@ -14,12 +14,14 @@ _NOT_A_SECRET = re.compile(
     ["']?
     (?: true | false | yes | no | on | off | null | none | nil
       | \$\{ [^}]* \} | \$\( [^)]* \) | < [^>]* > | \{\{ [^}]* \}\}
-      | \*+ | redacted | \[ redacted: [a-z0-9-]+ \]
+      | \*+ | redacted
     )?
     ["']?
     [`,;)\]}.]*
     """
 )
+_MARKER = re.compile(r"\[REDACTED:[a-z0-9-]+\]")
+_AFTER_A_VALUE = "`,;)]}."
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -27,6 +29,7 @@ class Rule:
     name: str
     pattern: re.Pattern[str]
     skips_placeholders: bool = False
+    spans_lines: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -36,8 +39,15 @@ class Redaction:
     line: int
 
 
-def _rule(name: str, pattern: str, *, skips_placeholders: bool = False) -> Rule:
-    return Rule(name=name, pattern=re.compile(pattern), skips_placeholders=skips_placeholders)
+def _rule(
+    name: str, pattern: str, *, skips_placeholders: bool = False, spans_lines: bool = False
+) -> Rule:
+    return Rule(
+        name=name,
+        pattern=re.compile(pattern),
+        skips_placeholders=skips_placeholders,
+        spans_lines=spans_lines,
+    )
 
 
 BUILT_IN_RULES = (
@@ -45,6 +55,7 @@ BUILT_IN_RULES = (
         "private-key",
         r"(?s)-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----"
         r".*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|\Z)",
+        spans_lines=True,
     ),
     _rule(
         "github-token",
@@ -70,15 +81,16 @@ BUILT_IN_RULES = (
     ),
     _rule(
         "authorization",
-        rf"(?i)(?<![A-Za-z0-9_-])(?:Proxy-)?Authorization:[ \t]*[A-Za-z][A-Za-z0-9-]*[ \t]+"
-        rf"(?P<{SECRET_GROUP}>[^\s\"']+)",
+        rf"(?i)(?<![A-Za-z0-9_-])(?:Proxy-)?Authorization:[ \t]*(?:[A-Za-z][A-Za-z0-9-]*[ \t]+)?"
+        rf"(?P<{SECRET_GROUP}>(?!(?:bearer|basic|token|digest|negotiate|ntlm)(?![^\s\"']))"
+        rf"(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+))",
         skips_placeholders=True,
     ),
     _rule(
         "assignment",
         rf"(?i)(?P<quote>[\"'])?(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*{_NAME_END}"
-        rf"(?(quote)|[\"']?)[ \t]*[=:][ \t]*(?P<{SECRET_GROUP}>"
-        rf"(?(quote)(?:\\.|(?!(?P=quote))[^\\\n])+"
+        rf"(?(quote)|[\"']?)(?:[ \t]*:[ \t]*|[ \t]+=[ \t]*|=)(?P<{SECRET_GROUP}>"
+        rf"(?(quote)(?:\\.|(?!(?P=quote))[^\\\n])*"
         rf"|(?:\"(?:\\.|[^\"\\\n])*\"(?![^\s,;)\]}}])"
         rf"|'(?:\\.|[^'\\\n])*'(?![^\s,;)\]}}])"
         rf"|\$\([^()\n]*\)(?![^\s\"])"
@@ -112,10 +124,11 @@ class Redactor:
         return "".join(pieces), tuple(redactions)
 
     def _spans(self, text: str) -> list[tuple[int, int, Rule]]:
+        segments = _between_markers(text)
         found = sorted(
             (start, end, priority)
             for priority, rule in enumerate(self.rules)
-            for start, end in self._matches(rule, text)
+            for start, end in self._matches(rule, text, segments)
         )
         merged: list[tuple[int, int, int]] = []
         for start, end, priority in found:
@@ -126,28 +139,61 @@ class Redactor:
                 merged.append((start, end, priority))
         return [(start, end, self.rules[priority]) for start, end, priority in merged]
 
-    def _matches(self, rule: Rule, text: str) -> list[tuple[int, int]]:
+    def _matches(
+        self, rule: Rule, text: str, segments: list[tuple[int, int]]
+    ) -> list[tuple[int, int]]:
         group = SECRET_GROUP if SECRET_GROUP in rule.pattern.groupindex else 0
         spans = []
-        for match in rule.pattern.finditer(text):
-            start, end = match.span(group)
-            secret = text[start:end]
-            if (
-                start == end
-                or (rule.skips_placeholders and _NOT_A_SECRET.fullmatch(secret))
-                or any(allowed.fullmatch(secret) for allowed in self.allow)
-            ):
-                continue
-            spans.append((start, end))
+        for segment_start, segment_end in segments:
+            for match in rule.pattern.finditer(text, segment_start, segment_end):
+                start, end = match.span(group)
+                secret = text[start:end]
+                if (
+                    start == end
+                    or (rule.skips_placeholders and _NOT_A_SECRET.fullmatch(secret))
+                    or self._allowed(secret)
+                ):
+                    continue
+                spans.append((start, end))
         return spans
+
+    def _allowed(self, secret: str) -> bool:
+        bare = _bare(secret)
+        return any(allowed.fullmatch(secret) or allowed.fullmatch(bare) for allowed in self.allow)
+
+
+def _between_markers(text: str) -> list[tuple[int, int]]:
+    segments = []
+    position = 0
+    for found in _MARKER.finditer(text):
+        segments.append((position, found.start()))
+        position = found.end()
+    segments.append((position, len(text)))
+    return segments
+
+
+def _bare(secret: str) -> str:
+    value = secret.rstrip(_AFTER_A_VALUE)
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
 
 
 def redact_identity(identity: Identity, redactor: Redactor) -> Identity:
     evidence = identity.evidence
     if not isinstance(evidence, ProbeOutput):
         return identity
-    lines = frozenset(redactor.redact(line, where="evidence")[0] for line in evidence.lines)
-    return replace(identity, evidence=replace(evidence, lines=lines))
+    spanning = {rule.name for rule in redactor.rules if rule.spans_lines}
+    lines = set()
+    for line in sorted(evidence.lines):
+        text, redactions = redactor.redact(line, where="evidence")
+        if hidden := [redaction.rule for redaction in redactions if redaction.rule in spanning]:
+            # Stored lines have no order, so the rest of the hidden block can't be told apart.
+            return replace(
+                identity, evidence=replace(evidence, lines=frozenset({marker(hidden[0])}))
+            )
+        lines.add(text)
+    return replace(identity, evidence=replace(evidence, lines=frozenset(lines)))
 
 
 def marker(rule: str) -> str:

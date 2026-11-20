@@ -186,7 +186,7 @@ each key.
 | `telegram-bot-token` | Telegram bot tokens, also inside an `api.telegram.org/bot` URL. |
 | `jwt` | JSON Web Tokens. |
 | `url-password` | The password in `scheme://user:password@host`, up to the last `@` before the host. |
-| `authorization` | The credential after `Authorization:` or `Proxy-Authorization:` and a scheme such as `Bearer` or `Basic`. |
+| `authorization` | The credential after `Authorization:` or `Proxy-Authorization:`, with or without a scheme such as `Bearer` or `Basic` before it. |
 | `assignment` | The value after a name that ends in `password`, `passwd`, `secret`, `secret_key`, `secret_key_base`, `token`, `api_key`, `access_key` or `private_key`, in any case and with `_`, `-` or nothing between the words, then `=` or `:`. |
 
 `assignment` is the only fuzzy rule, and the one that catches a plain
@@ -197,15 +197,15 @@ password, such as `RESTIC_PASSWORD=…` in a unit's environment or in
   `nil`;
 - references and placeholders: `${VAR}`, `$(command)`, `<placeholder>` and
   `{{template}}`;
-- values that are already hidden: `****`, `REDACTED` and doc-truth's own
-  `[REDACTED:…]` markers.
+- values that are already hidden: `****` and `REDACTED`.
 
 A bare `$VAR` is hidden, because a password can look like one. A name that
 only contains one of the words, such as `RESTIC_PASSWORD_FILE` or
 `PasswordAuthentication`, doesn't count. A value in quotes is hidden up to the
 closing quote, and so is the value in an assignment quoted whole, such as
 `"PASSWORD=two words"`; a quote escaped with a backslash doesn't end it. A
-value without quotes ends at the first space.
+value without quotes ends at the first space. `NAME=value`, `NAME = value` and
+`NAME: value` all count, but in `NAME= OTHER=x` the value is empty.
 
 ### Rules of your own and exceptions
 
@@ -233,9 +233,10 @@ allow = ["changeme", 'example-\w+']
   backslashes stay as they are.
 - A `name` is 1 to 64 lowercase letters, digits or `-`, and can't be one a
   built-in rule already uses. The marker shows it: `[REDACTED:door-pin]`.
-- A value is left alone when an `allow` expression matches all of it:
-  `changeme` keeps `token: changeme` but not `token: changeme2`. Exceptions
-  apply to every rule, yours included.
+- A value is left alone when an `allow` expression matches all of it, with
+  or without its quotes and the punctuation after it: `changeme` keeps
+  `token: changeme` and `"token": "changeme",` but not `token: changeme2`.
+  Exceptions apply to every rule, yours included.
 - A pattern or an exception that doesn't compile, or that matches empty text,
   is an error. `validate` also says how many rules are on.
 - Patterns are trusted like probe commands: one that backtracks badly can hang
@@ -248,6 +249,11 @@ the current rules too. A finding recorded before doc-truth had redaction, or
 before you added a rule, still matches its line, now with the marker in it,
 and its secret isn't copied into the new report. The secret is still in the
 old file itself: see [Privacy](../README.md#privacy) in the README.
+
+No rule, yours included, matches inside a `[REDACTED:…]` marker, so hiding
+twice changes nothing. An earlier finding that quoted a private key keeps only
+the marker for its evidence, because its lines are stored without their
+order and the key's other lines can't be told apart.
 
 ### What it shows
 
@@ -269,7 +275,9 @@ old file itself: see [Privacy](../README.md#privacy) in the README.
 Redaction is a net, not a guarantee. It misses a secret in a format no rule
 knows, one split across lines, and one cut in half where a probe's output
 reached its limit. Names that `assignment` doesn't know, such as `MYSQL_PWD`
-or `DB_PASS`, need a pattern of your own. A secret in a doc is sent as it is.
+or `DB_PASS`, need a pattern of your own. A value without quotes runs to the
+next space, so in `Password=…;User Id=ops` it hides `;User` too: it errs
+toward hiding. A secret in a doc is sent as it is.
 Keep secrets out of probe output in the first place, and read `evidence.md`
 before your first `check`. A false redaction costs one unchecked value; the
 marker names the rule, so an `allow` expression or `disable` fixes it.

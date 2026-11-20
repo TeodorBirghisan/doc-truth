@@ -150,6 +150,9 @@ def test_every_built_in_rule_has_a_case_above() -> None:
             "Proxy-Authorization: Basic [REDACTED:authorization]",
         ),
         ("Authorization: NTLM TlRMTVNTUAAB", "Authorization: NTLM [REDACTED:authorization]"),
+        ("Authorization: abc123def", "Authorization: [REDACTED:authorization]"),
+        ('Authorization: Bearer "a b"', "Authorization: Bearer [REDACTED:authorization]"),
+        ("password:hunter2", "password:[REDACTED:assignment]"),
     ],
 )
 def test_a_rule_with_a_secret_group_hides_only_the_value(text: str, expected: str) -> None:
@@ -202,6 +205,9 @@ def test_a_rule_with_a_secret_group_hides_only_the_value(text: str, expected: st
         "-----BEGIN " + "CERTIFICATE-----\nMIIDdzCCAl+g\n-----END CERTIFICATE-----",
         "Authorization: Bearer",
         "X-Authorization-Mode: strict",
+        "Authorization: basic",
+        "Environment=RESTIC_PASSWORD= RESTIC_REPOSITORY=/srv/restic TZ=UTC",
+        '"Env": ["DB_PASSWORD=", "USER=admin", "PORT=5432"],',
         "PWD=/home/ops",
         "OLDPWD=/srv",
         "PASSWORD=[REDACTED:github-token]",
@@ -229,6 +235,25 @@ def test_hiding_twice_changes_nothing(text: str) -> None:
     assert hide(once) == (once, ())
 
 
+def test_no_rule_matches_inside_a_marker_so_a_broad_rule_hides_nothing_twice() -> None:
+    broad = Redactor(
+        rules=(*BUILT_IN_RULES, Rule(name="long", pattern=re.compile(r"[A-Za-z0-9_:-]{16,}")))
+    )
+
+    once = hidden_by(broad, f"password={PASSWORD}")
+
+    assert once == "password=[REDACTED:assignment]"
+    assert hide(once, broad) == (once, ())
+
+
+def test_text_next_to_a_marker_is_still_checked() -> None:
+    broad = Redactor(rules=(Rule(name="long", pattern=re.compile(r"[A-Za-z0-9_:-]{16,}")),))
+
+    assert hidden_by(broad, "[REDACTED:assignment] then-a-long-secret-value") == (
+        "[REDACTED:assignment] [REDACTED:long]"
+    )
+
+
 def test_an_identity_hides_its_probe_lines_and_keeps_its_doc_lines() -> None:
     doc = CitedLines(file="docs/ops.md", lines=frozenset({f"password: {PASSWORD}"}))
     identity = Identity(
@@ -243,6 +268,21 @@ def test_an_identity_hides_its_probe_lines_and_keeps_its_doc_lines() -> None:
         evidence=ProbeOutput(
             probe="env", lines=frozenset({"PASSWORD=[REDACTED:assignment] KEEP=7"})
         ),
+    )
+
+
+def test_an_identity_that_quoted_a_private_key_keeps_only_the_marker() -> None:
+    lines = frozenset({BEGIN, *PEM_BODY.splitlines(), END, "an unrelated line"})
+    identity = Identity(
+        kind=Kind.CONTRADICTION,
+        doc=CitedLines(file="docs/ops.md", lines=frozenset({"A line."})),
+        evidence=ProbeOutput(probe="keys", lines=lines),
+    )
+
+    redacted = redact_identity(identity, REDACTOR)
+
+    assert redacted.evidence == ProbeOutput(
+        probe="keys", lines=frozenset({"[REDACTED:private-key]"})
     )
 
 
@@ -350,6 +390,14 @@ def test_an_allowed_value_is_kept() -> None:
     assert hide("cancellationToken: default", redactor) == ("cancellationToken: default", ())
 
 
+@pytest.mark.parametrize(
+    "text",
+    ['token: "changeme"', '"token": "changeme",', "token=changeme;", "PASSWORD='changeme'"],
+)
+def test_an_allowed_value_is_kept_in_quotes_and_before_punctuation(text: str) -> None:
+    assert hide(text, Redactor(allow=(re.compile("changeme"),))) == (text, ())
+
+
 def test_allow_must_match_the_whole_value() -> None:
     redactor = Redactor(allow=(re.compile("default"),))
 
@@ -429,6 +477,10 @@ MEBIBYTE = 1024 * 1024
         "://a:" + "@" * MEBIBYTE,
         "Authorization: " + "a" * MEBIBYTE,
         "Proxy-Authorization:" * (MEBIBYTE // 20),
+        "password=" + "." * MEBIBYTE + "x",
+        "Authorization: " + '"' * MEBIBYTE,
+        "[REDACTED:assignment]" * (MEBIBYTE // 21),
+        "password= " * (MEBIBYTE // 10),
     ],
     ids=lambda text: repr(text[:24]),
 )
