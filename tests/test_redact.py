@@ -33,7 +33,6 @@ JWT = joined("eyJ", "hbGciOiJIUzI1NiJ9", ".eyJ", "zdWIiOiJvcHMifQ", ".", "c2lnbm
 PEM_BODY = "ZmFrZSBtYXRlcmlhbA==\nbm90IHJlYWw=\n"
 BEGIN, END = joined("-----BEGIN ", "PRIVATE KEY-----"), joined("-----END ", "PRIVATE KEY-----")
 PRIVATE_KEY = f"{BEGIN}\n{PEM_BODY}{END}"
-KEY_TAIL = f"{'QUJD' * 16}\n{'RUZH' * 16}\nSUpL\n"
 PASSWORD = "correct-horse-battery-staple"
 
 REDACTOR = Redactor()
@@ -395,60 +394,10 @@ def test_a_private_key_is_hidden_whole_even_when_the_output_was_cut_off() -> Non
     assert hidden(f"before\n{cut_off}") == "before\n[REDACTED:private-key]"
 
 
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        (f"before\n{KEY_TAIL}{END}\nmode: 600", "before\n[REDACTED:private-key]\nmode: 600"),
-        (
-            f"Proc-Type: 4,ENCRYPTED\n\n{KEY_TAIL}{END}",
-            "Proc-Type: 4,ENCRYPTED\n\n[REDACTED:private-key]",
-        ),
-        (
-            f"head\r\n{KEY_TAIL.replace(chr(10), chr(13) + chr(10))}{END}",
-            "head\r\n[REDACTED:private-key]",
-        ),
-        (f"head\r{KEY_TAIL.replace(chr(10), chr(13))}{END}", "head\r[REDACTED:private-key]"),
-        (f"{'Q' * 50}\n{KEY_TAIL}{END}", f"{'Q' * 50}\n[REDACTED:private-key]"),
-        (f"done\nQUJD\n{END}", "done\n[REDACTED:private-key]"),
-        (END, "[REDACTED:private-key]"),
-        (f"{END}\n{END}", "[REDACTED:private-key]\n[REDACTED:private-key]"),
-        (f"[REDACTED:x]{END}", "[REDACTED:x][REDACTED:private-key]"),
-        (f"[REDACTED:x]{KEY_TAIL}{END}", "[REDACTED:x][REDACTED:private-key]"),
-        (f"word QUJD\n{END}", "word QUJD\n[REDACTED:private-key]"),
-        (f"QUJD\n\n{END}", "QUJD\n\n[REDACTED:private-key]"),
-        (f"{'Q' * 64}\n\n{END}", f"{'Q' * 64}\n\n[REDACTED:private-key]"),
-        (f"{'Q' * 64}\nQQ==\n{END}", "[REDACTED:private-key]"),
-        (f"{'Q' * 1600}\n{END}", "[REDACTED:private-key]"),
-        (f"{'Q' * 64}\n{'Q' * 120}\n{'Q' * 20}\n{END}", f"{'Q' * 64}\n[REDACTED:private-key]"),
-        (f"x{END}", f"x{END}"),
-        (f"x]{END}", f"x]{END}"),
-    ],
-)
-def test_the_end_of_a_key_is_hidden_with_the_body_lines_above_it(text: str, expected: str) -> None:
-    assert hidden(text) == expected
-
-
-@pytest.mark.parametrize(
-    "before", ["x", "x]", "[a]", "[REDACTED:a]x"], ids=["text", "bracket", "brackets", "marker"]
-)
-def test_an_end_line_inside_other_text_leaves_a_key_that_shares_its_dashes(before: str) -> None:
-    text = f"{before}-----END RSA PRIVATE KEY-----BEGIN RSA PRIVATE KEY-----\n{KEY_TAIL}"
-
-    assert hidden(text) == f"{before}-----END RSA PRIVATE KEY[REDACTED:private-key]"
-
-
 def test_an_end_line_inside_other_text_is_not_a_key() -> None:
     text = f"echo {END}"
 
     assert hidden(text) == text
-
-
-def test_an_identity_that_quoted_the_end_of_a_key_reads_like_fresh_evidence() -> None:
-    fresh = frozenset(hidden(f"{KEY_TAIL}{END}\n").splitlines())
-
-    redacted = redact_identity(key_identity(*KEY_TAIL.splitlines(), END), REDACTOR)
-
-    assert redacted.evidence == ProbeOutput(probe="keys", lines=fresh)
 
 
 def test_any_kind_of_private_key_is_hidden() -> None:

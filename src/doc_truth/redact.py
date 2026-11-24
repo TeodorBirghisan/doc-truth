@@ -1,5 +1,4 @@
 import re
-import string
 from dataclasses import dataclass, replace
 
 from doc_truth.findings import Identity, ProbeOutput
@@ -34,10 +33,7 @@ _NOT_A_URL_PASSWORD = re.compile(
 )
 _MARKER = re.compile(r"\[REDACTED:[a-z0-9-]+\]")
 _KEY_EDGE = re.compile(r"-----(?:BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----")
-_KEY_CHARACTERS = frozenset(string.ascii_letters + string.digits + "+/=")
 _KEY_LEFTOVER = re.compile(r"[A-Za-z0-9+/=]+|-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----")
-_KEY_TAIL = "key_tail"
-_KEY_LINE_WIDTH = 40
 _SCHEMES = "(?:bearer|basic|token|digest|negotiate|ntlm)"
 _UNLESS_EMPTY = r"(?:[ \t]++(?!(?-i:[\"']?[A-Z][A-Z0-9]*_[A-Z0-9_]*=)))?"
 _AFTER_A_VALUE = "`,;)]}."
@@ -77,8 +73,7 @@ BUILT_IN_RULES = (
     _rule(
         "private-key",
         r"(?s)-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----"
-        r".*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|\Z)"
-        rf"|(?<![^\r\n])(?P<{_KEY_TAIL}>-----END [A-Z0-9 ]{{0,40}}PRIVATE KEY-----)",
+        r".*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|\Z)",
         spans_lines=True,
     ),
     _rule(
@@ -170,53 +165,21 @@ class Redactor:
         group = SECRET_GROUP if SECRET_GROUP in rule.pattern.groupindex else 0
         spans = []
         for segment_start, segment_end in segments:
-            # Matched as a string of its own, a segment starts a line after a marker, and no
-            # lookbehind sees the marker's closing bracket.
-            segment = text[segment_start:segment_end]
-            for match in rule.pattern.finditer(segment):
+            for match in rule.pattern.finditer(text, segment_start, segment_end):
                 start, end = match.span(group)
-                if rule.spans_lines and match[_KEY_TAIL] is not None:
-                    start = _start_of_key_body(segment, start)
-                secret = segment[start:end]
+                secret = text[start:end]
                 if (
                     start == end
                     or (rule.placeholders is not None and rule.placeholders.fullmatch(secret))
                     or self._allowed(secret)
                 ):
                     continue
-                spans.append((segment_start + start, segment_start + end))
+                spans.append((start, end))
         return spans
 
     def _allowed(self, secret: str) -> bool:
         bare = _bare(secret)
         return any(allowed.fullmatch(secret) or allowed.fullmatch(bare) for allowed in self.allow)
-
-
-def _start_of_key_body(text: str, start: int) -> int:
-    # Stepping back over key characters, instead of matching the lines above with a pattern or
-    # searching for line breaks, visits each character once, even in a long run of
-    # base64-shaped lines such as a list of hashes. Only the last line of a body is short, so a
-    # short line above it, such as a one-word message, is not part of the key.
-    width = None
-    last_line = True
-    while start > 0:
-        line_end = start - 1
-        if text[line_end] == "\n" and line_end > 0 and text[line_end - 1] == "\r":
-            line_end -= 1
-        line_start = line_end
-        while line_start > 0 and text[line_start - 1] in _KEY_CHARACTERS:
-            line_start -= 1
-        length = line_end - line_start
-        if length == 0 or (line_start > 0 and text[line_start - 1] not in "\r\n"):
-            break
-        if not last_line:
-            if width is None and length >= _KEY_LINE_WIDTH:
-                width = length
-            if length != width:
-                break
-        last_line = False
-        start = line_start
-    return start
 
 
 def _between_markers(text: str) -> list[tuple[int, int]]:
