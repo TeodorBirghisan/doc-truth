@@ -184,6 +184,27 @@ def test_a_rule_with_a_secret_group_hides_only_the_value(text: str, expected: st
 @pytest.mark.parametrize(
     "text",
     [
+        'Authorization: "a\rb"',
+        "Authorization: 'a\rb'",
+        "Authorization: Bearer abc\rOther: data",
+        '"token=a\\\rb"',
+        '"token=a\rb"',
+        'password: "a\\\rb"',
+        'password: "a\rb"',
+        "password: 'a\\\rb'",
+        "password: 'a\rb'",
+        "password=$(a\rb)",
+        'password=x"a\rb"',
+        "password=x'a\rb'",
+    ],
+)
+def test_a_lone_carriage_return_ends_a_value_as_it_ends_a_line(text: str) -> None:
+    assert hidden(text) == "\r".join(hidden(line) for line in text.split("\r"))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "automountServiceAccountToken: false",
         "RESTIC_PASSWORD_FILE=/etc/restic/password",
         "PasswordAuthentication no",

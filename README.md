@@ -434,7 +434,10 @@ Run folders are readable only by the user who ran doc-truth. The
 quotes of the findings you acknowledge. A secret quoted there before
 doc-truth had redaction is still in it: replace it with the marker the
 evidence now shows, such as `[REDACTED:assignment]`. doc-truth reads the file
-through the current rules, so the acknowledgement keeps matching either way.
+through the current rules, so the acknowledgement keeps matching whether you
+replace it or not. In a few cases, such as a finding that quoted a private
+key, it shows as new once and needs `ack` again: see the
+[configuration reference](docs/configuration.md#earlier-runs-and-known-findings).
 Support for local models through OpenAI-compatible endpoints (Ollama,
 llama.cpp, vLLM) is planned for v0.2.
 

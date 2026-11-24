@@ -186,7 +186,7 @@ each key.
 | `telegram-bot-token` | Telegram bot tokens, also inside an `api.telegram.org/bot` URL. |
 | `jwt` | JSON Web Tokens. |
 | `url-password` | The password in `scheme://user:password@host`, up to the last `@` before the host. |
-| `authorization` | The value of an `Authorization:` or `Proxy-Authorization:` header, to a closing quote or the end of the line. A scheme word such as `Bearer` or `Basic` stays visible. |
+| `authorization` | The value of an `Authorization:` or `Proxy-Authorization:` header. A value in quotes runs to its closing quote; one without runs to the first quote or the end of the line, so a `Digest` header's quoted parameters stay visible. A scheme word such as `Bearer` or `Basic` stays visible. |
 | `assignment` | The value after a name that ends in `password`, `passwd`, `secret`, `secret_key`, `secret_key_base`, `token`, `api_key`, `access_key` or `private_key`, in any case and with `_`, `-` or nothing between the words, then `=` or `:`. |
 
 `assignment` is the only fuzzy rule, and the one that catches a plain
@@ -289,7 +289,9 @@ toward hiding. A secret in a doc is sent as it is.
 Keep secrets out of probe output in the first place, and read `evidence.md`
 before your first `check`. A false redaction, such as `passwd: files` in
 `/etc/nsswitch.conf`, costs one unchecked value. The marker names the rule, so
-an `allow` expression (`allow = ["files"]`) or `disable` fixes it.
+an `allow` expression (`allow = ["files"]`) or `disable` fixes it. A marker
+can't be turned back into the value, so a finding you acknowledged on that line
+then shows as new once and needs `ack` again.
 
 ## Where runs are kept
 
