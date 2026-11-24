@@ -151,6 +151,7 @@ def test_every_built_in_rule_has_a_case_above() -> None:
             "https://ops:[REDACTED:url-password]@example.org?q=a@b",
         ),
         ("redis://default:none@host", "redis://default:[REDACTED:url-password]@host"),
+        ('redis://default:"none"@host', "redis://default:[REDACTED:url-password]@host"),
         (
             "Proxy-Authorization: Basic dXNlcjpwYXNz",
             "Proxy-Authorization: Basic [REDACTED:authorization]",
@@ -233,6 +234,8 @@ def test_a_lone_carriage_return_ends_a_value_as_it_ends_a_line(text: str) -> Non
         "https://example.org:8443/status",
         "https://ops:${RESTIC_PASSWORD}@example.org/",
         "rest:https://ops:<password>@example.org/backups",
+        'redis://ops:"${REDIS_PASSWORD}"@example.org/',
+        "redis://ops:'${REDIS_PASSWORD}'@example.org/",
         "ssh://git@example.org/ops/infra.git",
         "postgres://ops@example.org/db",
         "sk-short-and-not-a-key",
@@ -407,6 +410,14 @@ def test_a_private_key_is_hidden_whole_even_when_the_output_was_cut_off() -> Non
         (f"done\nQUJD\n{END}", "done\n[REDACTED:private-key]"),
         (END, "[REDACTED:private-key]"),
         (f"{END}\n{END}", "[REDACTED:private-key]\n[REDACTED:private-key]"),
+        (f"[REDACTED:x]{END}", "[REDACTED:x][REDACTED:private-key]"),
+        (f"{'Q' * 100}\n{END}", "[REDACTED:private-key]"),
+        (f"{'Q' * 101}\n{END}", f"{'Q' * 101}\n[REDACTED:private-key]"),
+        (f"{'Q' * 100}\n{'Q' * 100}\nQUJD\n{END}", "[REDACTED:private-key]"),
+        (
+            f"{'Q' * 101}\n{'Q' * 101}\nQUJD\n{END}",
+            f"{'Q' * 101}\n{'Q' * 101}\n[REDACTED:private-key]",
+        ),
         (f"[REDACTED:x]{KEY_TAIL}{END}", "[REDACTED:x][REDACTED:private-key]"),
     ],
 )
@@ -611,6 +622,7 @@ MEBIBYTE = 1024 * 1024
         f"{END}\n" * (MEBIBYTE // 26),
         "a\n" * (MEBIBYTE // 2) + END,
         "-----END " + "A" * MEBIBYTE,
+        ("QUJD" * 16 + "\n") * (MEBIBYTE // 65) + END,
     ],
     ids=lambda text: repr(text[:24]),
 )

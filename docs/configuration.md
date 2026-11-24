@@ -176,7 +176,7 @@ each key.
 
 | Rule | Hides |
 |---|---|
-| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. Output that starts inside a key, as `tail` prints it, is hidden from the body lines above its `END` line. Lines from the middle of a key, with neither line, aren't recognised. |
+| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. Output that starts inside a key, as `tail` prints it, is hidden from the body lines above its `END` line, when that line isn't indented or escaped inside a string. Lines from the middle of a key, with neither line, aren't recognised. |
 | `github-token` | GitHub tokens: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` and `github_pat_`. |
 | `gitlab-token` | GitLab personal access tokens, `glpat-`. |
 | `slack-token` | Slack tokens, `xoxb-` and the other `xox` kinds. |
