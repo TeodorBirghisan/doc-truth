@@ -365,7 +365,7 @@ def test_redaction_settings_are_read(write_config: Callable[[str], Path]) -> Non
         r"TICKET-\d+",
         r"pin=(?P<secret>\d+)",
     ]
-    assert not any(rule.skips_placeholders for rule in redactor.rules[-2:])
+    assert not any(rule.placeholders for rule in redactor.rules[-2:])
     assert [pattern.pattern for pattern in redactor.allow] == ["changeme", r"example-\w+"]
     assert redactor.redact("TICKET-7 pin=1234", where="stdout")[0] == (
         "[REDACTED:ticket] pin=[REDACTED:pin]"

@@ -9,22 +9,27 @@ _NAME_END = (
     r"(?:password|passwd|secret(?:[_-]?key(?:[_-]?base)?)?|token"
     r"|api[_-]?key|access[_-]?key|private[_-]?key)"
 )
+_REFERENCE = r"""
+    \$\{ [A-Za-z_][A-Za-z0-9_]*
+      (?: :? [-=+] (?: \$\{? [A-Za-z_][A-Za-z0-9_]* \}? )? | :? \? [^}]* )? \}
+    | \$\( [^)]* \) | < [^>]* > | \{\{ [^}]* \}\}
+    | \*+ | redacted
+"""
 _NOT_A_SECRET = re.compile(
-    r"""(?ix)
+    rf"""(?ix)
     ["']?
-    (?: true | false | yes | no | on | off | null | none | nil
-      | \$\{ [A-Za-z_][A-Za-z0-9_]*
-        (?: :? [-=+] (?: \$\{? [A-Za-z_][A-Za-z0-9_]* \}? )? | :? \? [^}]* )? \}
-      | \$\( [^)]* \) | < [^>]* > | \{\{ [^}]* \}\}
-      | \*+ | redacted
-    )?
+    (?: true | false | yes | no | on | off | null | none | nil | {_REFERENCE} )?
     ["']?
-    [`,;)\]}.]*
+    [`,;)\]}}.]*
     """
 )
+_NOT_A_URL_PASSWORD = re.compile(rf"(?ix) (?: {_REFERENCE} )")
 _MARKER = re.compile(r"\[REDACTED:[a-z0-9-]+\]")
 _KEY_EDGE = re.compile(r"-----(?:BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----")
+_KEY_BODY = re.compile(r"[A-Za-z0-9+/=]+")
 _KEY_LEFTOVER = re.compile(r"[A-Za-z0-9+/=]+|-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----")
+_KEY_TAIL = "key_tail"
+_KEY_LINE_WIDTH = 40
 _SCHEMES = "(?:bearer|basic|token|digest|negotiate|ntlm)"
 _UNLESS_EMPTY = r"(?:[ \t]++(?!(?-i:[\"']?[A-Z][A-Z0-9]*_[A-Z0-9_]*=)))?"
 _AFTER_A_VALUE = "`,;)]}."
@@ -34,7 +39,7 @@ _AFTER_A_VALUE = "`,;)]}."
 class Rule:
     name: str
     pattern: re.Pattern[str]
-    skips_placeholders: bool = False
+    placeholders: re.Pattern[str] | None = None
     spans_lines: bool = False
 
 
@@ -46,12 +51,16 @@ class Redaction:
 
 
 def _rule(
-    name: str, pattern: str, *, skips_placeholders: bool = False, spans_lines: bool = False
+    name: str,
+    pattern: str,
+    *,
+    placeholders: re.Pattern[str] | None = None,
+    spans_lines: bool = False,
 ) -> Rule:
     return Rule(
         name=name,
         pattern=re.compile(pattern),
-        skips_placeholders=skips_placeholders,
+        placeholders=placeholders,
         spans_lines=spans_lines,
     )
 
@@ -60,7 +69,8 @@ BUILT_IN_RULES = (
     _rule(
         "private-key",
         r"(?s)-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----"
-        r".*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|\Z)",
+        r".*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|\Z)"
+        rf"|(?<![^\r\n])(?P<{_KEY_TAIL}>-----END [A-Z0-9 ]{{0,40}}PRIVATE KEY-----)",
         spans_lines=True,
     ),
     _rule(
@@ -83,14 +93,14 @@ BUILT_IN_RULES = (
     _rule(
         "url-password",
         rf"://[^\s/:@]*:(?P<{SECRET_GROUP}>[^\s/?#]+)@",
-        skips_placeholders=True,
+        placeholders=_NOT_A_URL_PASSWORD,
     ),
     _rule(
         "authorization",
         rf"(?i)(?<![A-Za-z0-9_-])(?:Proxy-)?Authorization:[ \t]*(?:{_SCHEMES}[ \t]+)?"
         rf"(?P<{SECRET_GROUP}>(?!{_SCHEMES}(?![^\s\"']))"
         rf"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s\"'](?:[^\"'\r\n]*[^\s\"'])?))",
-        skips_placeholders=True,
+        placeholders=_NOT_A_SECRET,
     ),
     _rule(
         "assignment",
@@ -102,7 +112,7 @@ BUILT_IN_RULES = (
         rf"|'(?:\\[^\r\n]|[^'\\\r\n])*'(?![^\s,;)\]}}])"
         rf"|\$\([^()\r\n]*\)(?![^\s\"])"
         rf"|(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|\S)+)))",
-        skips_placeholders=True,
+        placeholders=_NOT_A_SECRET,
     ),
 )
 BUILT_IN_NAMES = tuple(rule.name for rule in BUILT_IN_RULES)
@@ -154,10 +164,12 @@ class Redactor:
         for segment_start, segment_end in segments:
             for match in rule.pattern.finditer(text, segment_start, segment_end):
                 start, end = match.span(group)
+                if rule.spans_lines and match[_KEY_TAIL] is not None:
+                    start = _start_of_key_body(text, segment_start, start)
                 secret = text[start:end]
                 if (
                     start == end
-                    or (rule.skips_placeholders and _NOT_A_SECRET.fullmatch(secret))
+                    or (rule.placeholders is not None and rule.placeholders.fullmatch(secret))
                     or self._allowed(secret)
                 ):
                     continue
@@ -167,6 +179,33 @@ class Redactor:
     def _allowed(self, secret: str) -> bool:
         bare = _bare(secret)
         return any(allowed.fullmatch(secret) or allowed.fullmatch(bare) for allowed in self.allow)
+
+
+def _start_of_key_body(text: str, floor: int, start: int) -> int:
+    # Walking back from the END line keeps this linear; a pattern for the lines above it would
+    # retry from every line of a long run of base64-shaped lines, such as a list of hashes.
+    # Only the last line of a body is short, so a short line above it, such as a one-word
+    # message, is not part of the key.
+    width = None
+    last_line = True
+    while start > floor:
+        line_end = start - 1
+        if text[line_end] == "\n" and line_end > floor and text[line_end - 1] == "\r":
+            line_end -= 1
+        line_start = (
+            max(text.rfind("\n", floor, line_end), text.rfind("\r", floor, line_end), floor - 1) + 1
+        )
+        length = line_end - line_start
+        if not _KEY_BODY.fullmatch(text, line_start, line_end):
+            break
+        if not last_line:
+            if width is None and length >= _KEY_LINE_WIDTH:
+                width = length
+            if length != width:
+                break
+        last_line = False
+        start = line_start
+    return start
 
 
 def _between_markers(text: str) -> list[tuple[int, int]]:

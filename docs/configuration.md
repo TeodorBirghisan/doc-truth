@@ -176,7 +176,7 @@ each key.
 
 | Rule | Hides |
 |---|---|
-| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. |
+| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. Output that starts inside a key, as `tail` prints it, is hidden from the body lines above its `END` line. Lines from the middle of a key, with neither line, aren't recognised. |
 | `github-token` | GitHub tokens: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` and `github_pat_`. |
 | `gitlab-token` | GitLab personal access tokens, `glpat-`. |
 | `slack-token` | Slack tokens, `xoxb-` and the other `xox` kinds. |
@@ -185,7 +185,7 @@ each key.
 | `tailscale-key` | Tailscale keys, `tskey-`. |
 | `telegram-bot-token` | Telegram bot tokens, also inside an `api.telegram.org/bot` URL. |
 | `jwt` | JSON Web Tokens. |
-| `url-password` | The password in `scheme://user:password@host`, up to the last `@` before the host. |
+| `url-password` | The password in `scheme://user:password@host`, up to the last `@` before the host. A reference, placeholder or hidden value, as listed for `assignment` below, stays visible; a word such as `none` doesn't. |
 | `authorization` | The value of an `Authorization:` or `Proxy-Authorization:` header. A value in quotes runs to its closing quote; one without runs to the first quote or the end of the line, so a `Digest` header's quoted parameters stay visible. A scheme word such as `Bearer` or `Basic` stays visible. |
 | `assignment` | The value after a name that ends in `password`, `passwd`, `secret`, `secret_key`, `secret_key_base`, `token`, `api_key`, `access_key` or `private_key`, in any case and with `_`, `-` or nothing between the words, then `=` or `:`. |
 
@@ -252,7 +252,8 @@ allow = ["changeme", 'example-\w+']
 `check` reads the previous run's report and the known-findings file through
 the current rules too. A finding recorded before doc-truth had redaction, or
 before you added a rule, still matches its line, now with the marker in it,
-and its secret isn't copied into the new report. The secret is still in the
+and its secret isn't copied into the new report, unless it quoted only lines
+from the middle of a key, which no rule recognises. The secret is still in the
 old file itself: see [Privacy](../README.md#privacy) in the README.
 
 No rule, yours included, matches inside a `[REDACTED:…]` marker, so hiding

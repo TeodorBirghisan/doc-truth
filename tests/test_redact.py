@@ -33,6 +33,7 @@ JWT = joined("eyJ", "hbGciOiJIUzI1NiJ9", ".eyJ", "zdWIiOiJvcHMifQ", ".", "c2lnbm
 PEM_BODY = "ZmFrZSBtYXRlcmlhbA==\nbm90IHJlYWw=\n"
 BEGIN, END = joined("-----BEGIN ", "PRIVATE KEY-----"), joined("-----END ", "PRIVATE KEY-----")
 PRIVATE_KEY = f"{BEGIN}\n{PEM_BODY}{END}"
+KEY_TAIL = f"{'QUJD' * 16}\n{'RUZH' * 16}\nSUpL\n"
 PASSWORD = "correct-horse-battery-staple"
 
 REDACTOR = Redactor()
@@ -149,6 +150,7 @@ def test_every_built_in_rule_has_a_case_above() -> None:
             "https://ops:pw@example.org?q=a@b",
             "https://ops:[REDACTED:url-password]@example.org?q=a@b",
         ),
+        ("redis://default:none@host", "redis://default:[REDACTED:url-password]@host"),
         (
             "Proxy-Authorization: Basic dXNlcjpwYXNz",
             "Proxy-Authorization: Basic [REDACTED:authorization]",
@@ -388,6 +390,44 @@ def test_a_private_key_is_hidden_whole_even_when_the_output_was_cut_off() -> Non
     assert hidden(f"before\n{cut_off}") == "before\n[REDACTED:private-key]"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (f"before\n{KEY_TAIL}{END}\nmode: 600", "before\n[REDACTED:private-key]\nmode: 600"),
+        (
+            f"Proc-Type: 4,ENCRYPTED\n\n{KEY_TAIL}{END}",
+            "Proc-Type: 4,ENCRYPTED\n\n[REDACTED:private-key]",
+        ),
+        (
+            f"head\r\n{KEY_TAIL.replace(chr(10), chr(13) + chr(10))}{END}",
+            "head\r\n[REDACTED:private-key]",
+        ),
+        (f"head\r{KEY_TAIL.replace(chr(10), chr(13))}{END}", "head\r[REDACTED:private-key]"),
+        (f"{'Q' * 50}\n{KEY_TAIL}{END}", f"{'Q' * 50}\n[REDACTED:private-key]"),
+        (f"done\nQUJD\n{END}", "done\n[REDACTED:private-key]"),
+        (END, "[REDACTED:private-key]"),
+        (f"{END}\n{END}", "[REDACTED:private-key]\n[REDACTED:private-key]"),
+        (f"[REDACTED:x]{KEY_TAIL}{END}", "[REDACTED:x][REDACTED:private-key]"),
+    ],
+)
+def test_the_end_of_a_key_is_hidden_with_the_body_lines_above_it(text: str, expected: str) -> None:
+    assert hidden(text) == expected
+
+
+def test_an_end_line_inside_other_text_is_not_a_key() -> None:
+    text = f"echo {END}"
+
+    assert hidden(text) == text
+
+
+def test_an_identity_that_quoted_the_end_of_a_key_reads_like_fresh_evidence() -> None:
+    fresh = frozenset(hidden(f"{KEY_TAIL}{END}\n").splitlines())
+
+    redacted = redact_identity(key_identity(*KEY_TAIL.splitlines(), END), REDACTOR)
+
+    assert redacted.evidence == ProbeOutput(probe="keys", lines=fresh)
+
+
 def test_any_kind_of_private_key_is_hidden() -> None:
     key = PRIVATE_KEY.replace(" PRIVATE", " OPENSSH PRIVATE")
 
@@ -568,6 +608,9 @@ MEBIBYTE = 1024 * 1024
         "password=${A:-" + "a" * MEBIBYTE,
         "Authorization: " + "a " * (MEBIBYTE // 2),
         ("Authorization:" + " " * 10) * (MEBIBYTE // 24),
+        f"{END}\n" * (MEBIBYTE // 26),
+        "a\n" * (MEBIBYTE // 2) + END,
+        "-----END " + "A" * MEBIBYTE,
     ],
     ids=lambda text: repr(text[:24]),
 )
