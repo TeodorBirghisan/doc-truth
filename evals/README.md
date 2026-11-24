@@ -48,6 +48,7 @@ the reasons are listed under the table.
 | `spelling-and-rounding` | reports nothing from misspelt words around correct facts, or from a time that's fairly rounded |
 | `value-in-passing` | finds a wrong time mentioned in passing, in a sentence about another job in a long manual |
 | `haystack` | finds one schedule drift among 12 docs and 14 probes that otherwise agree |
+| `redacted-value` | finds a real drift on a unit's line and reports nothing about the password the evidence hides on that same line |
 
 ## What a case contains
 
@@ -66,7 +67,8 @@ One `[[results]]` table per probe in `doc-truth.toml`, giving `exit-code` (or
 `timed-out = true`) and optionally `stdout` and `stderr`. The tests turn it
 into the same evidence `doc-truth collect` writes, through the same code, so
 the model sees exactly what it would see on a real host. A probe fails by the
-same rules as in `collect`.
+same rules as in `collect`, and its output is redacted by the same rules too,
+using the case's `[redaction]` table if it has one.
 
 ### `expected.toml`
 

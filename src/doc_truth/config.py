@@ -6,12 +6,13 @@ import re
 import textwrap
 import tomllib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time
 from enum import StrEnum
 from pathlib import Path
 
 from doc_truth.findings import CitedLines, Confidence, Identity, Kind, ProbeOutput, normalised
+from doc_truth.redact import BUILT_IN_NAMES, BUILT_IN_RULES, Redactor, Rule, redact_identity
 
 DEFAULT_CONFIG_NAME = "doc-truth.toml"
 DEFAULT_TIMEOUT = 30.0
@@ -20,10 +21,12 @@ DEFAULT_SUCCESS_EXIT_CODES = frozenset({0})
 DEFAULT_MODEL = "sonnet"
 DEFAULT_MODEL_TIMEOUT = 600.0
 
-TOP_LEVEL_KEYS = ("docs", "probes", "model")
+TOP_LEVEL_KEYS = ("docs", "probes", "model", "redaction")
 DOC_KEYS = ("path", "notes")
 PROBE_KEYS = ("name", "command", "timeout", "success-exit-codes", "notes")
 MODEL_KEYS = ("name", "timeout")
+REDACTION_KEYS = ("enabled", "disable", "patterns", "allow")
+PATTERN_KEYS = ("name", "pattern")
 KNOWN_KEYS = (
     "id",
     "title",
@@ -41,6 +44,7 @@ KNOWN_KEYS = (
 )
 
 _PROBE_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_RULE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _GLOB_CHARACTERS = frozenset("*?[")
 
 
@@ -96,6 +100,7 @@ class Config:
     docs: tuple[DocSource, ...]
     probes: tuple[Probe, ...]
     model: ModelSettings = ModelSettings()
+    redaction: Redactor = field(default_factory=Redactor)
 
     @property
     def absolute_path(self) -> Path:
@@ -127,15 +132,17 @@ def load_config(path: Path) -> Config:
     docs = _parse_docs(data.get("docs"), problems)
     probes = _parse_probes(data.get("probes"), problems)
     model = _parse_model(data.get("model"), problems)
+    redaction = _parse_redaction(data.get("redaction"), problems)
     if problems:
         raise ConfigError(path, problems)
-    assert model is not None
+    assert model is not None and redaction is not None
     return Config(
         path=path,
         base_dir=Path(os.path.abspath(path)).parent,
         docs=docs,
         probes=probes,
         model=model,
+        redaction=redaction,
     )
 
 
@@ -209,10 +216,18 @@ def load_known(config: Config) -> tuple[Acknowledgement, ...]:
             continue
         acknowledgement = _acknowledgement(entry, where, problems)
         if acknowledgement is not None:
-            known.append(acknowledgement)
+            known.append(_redacted(acknowledgement, config.redaction))
     if problems:
         raise ConfigError(path, problems)
     return tuple(known)
+
+
+def _redacted(acknowledgement: Acknowledgement, redactor: Redactor) -> Acknowledgement:
+    return replace(
+        acknowledgement,
+        title=redactor.redact(acknowledgement.title, where="title")[0],
+        identity=redact_identity(acknowledgement.identity, redactor),
+    )
 
 
 def _acknowledgement(
@@ -431,6 +446,118 @@ def _parse_model(value: object, problems: list[str]) -> ModelSettings | None:
     return ModelSettings(name=name or DEFAULT_MODEL, timeout=timeout)
 
 
+def _parse_redaction(value: object, problems: list[str]) -> Redactor | None:
+    if value is None:
+        return Redactor()
+    if isinstance(value, list):
+        problems.append(
+            "[[redaction]] must be written [redaction], with single brackets, only once"
+        )
+        return None
+    if not isinstance(value, dict):
+        problems.append(f"redaction must be a [redaction] table, found {_describe(value)}")
+        return None
+    where = "[redaction]"
+    before = len(problems)
+    _reject_unknown_keys(value, REDACTION_KEYS, where, problems)
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        problems.append(f"{where}: enabled must be true or false, found {_describe(enabled)}")
+    disabled = _disabled_rules(value, where, problems)
+    added = _added_rules(value, where, problems)
+    allow = tuple(
+        pattern
+        for number, text in enumerate(
+            _array(value, "allow", "regular expressions", where, problems), 1
+        )
+        if (pattern := _regex(text, f"{where}: allow #{number}", problems)) is not None
+    )
+    if len(problems) > before:
+        return None
+    if not enabled:
+        return Redactor(rules=())
+    built_in = tuple(rule for rule in BUILT_IN_RULES if rule.name not in disabled)
+    return Redactor(rules=(*built_in, *added), allow=allow)
+
+
+def _disabled_rules(table: Mapping[str, object], where: str, problems: list[str]) -> set[str]:
+    disabled: set[str] = set()
+    for name in _array(table, "disable", "built-in rule names", where, problems):
+        if name in BUILT_IN_NAMES:
+            disabled.add(name)
+            continue
+        message = f"{where}: disable names {_describe_text(name)}, which is not a built-in rule"
+        if isinstance(name, str) and (
+            close := difflib.get_close_matches(name, BUILT_IN_NAMES, n=1)
+        ):
+            message += f" (did you mean {_quote(close[0])}?)"
+        problems.append(message)
+    return disabled
+
+
+def _added_rules(table: Mapping[str, object], where: str, problems: list[str]) -> tuple[Rule, ...]:
+    rules: list[Rule] = []
+    taken = set(BUILT_IN_NAMES)
+    for number, entry in enumerate(_array(table, "patterns", "tables", where, problems), start=1):
+        label = f"{where}: patterns #{number}"
+        if not isinstance(entry, dict):
+            problems.append(
+                f"{label}: must be a table with name and pattern, found {_describe(entry)}"
+            )
+            continue
+        before = len(problems)
+        _reject_unknown_keys(entry, PATTERN_KEYS, label, problems)
+        name = _string(entry, "name", label, problems, required=True)
+        if name is not None and not _RULE_NAME.fullmatch(name):
+            problems.append(
+                f'{label}: name must be 1 to 64 lowercase letters, digits or "-", '
+                "starting with a letter or digit"
+            )
+        elif name is not None and name in taken:
+            problems.append(f"{label}: name {_quote(name)} is already used by another rule")
+        pattern = (
+            None
+            if "pattern" not in entry
+            else _regex(entry["pattern"], f"{label}: pattern", problems)
+        )
+        if "pattern" not in entry:
+            problems.append(f"{label}: missing pattern")
+        if len(problems) > before or name is None or pattern is None:
+            continue
+        taken.add(name)
+        rules.append(Rule(name=name, pattern=pattern))
+    return tuple(rules)
+
+
+def _array(
+    table: Mapping[str, object], key: str, contents: str, where: str, problems: list[str]
+) -> list[object]:
+    value = table.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        problems.append(f"{where}: {key} must be an array of {contents}, found {_describe(value)}")
+        return []
+    return value
+
+
+def _regex(value: object, where: str, problems: list[str]) -> re.Pattern[str] | None:
+    if not isinstance(value, str):
+        problems.append(
+            f"{where}: must be a regular expression in a string, found {_describe(value)}"
+        )
+        return None
+    try:
+        pattern = re.compile(value)
+    except re.PatternError as error:
+        problems.append(f"{where}: is not a valid regular expression: {error}")
+        return None
+    if pattern.search("") is not None:
+        problems.append(f"{where}: matches empty text, so it would match everywhere")
+        return None
+    return pattern
+
+
 def _entries(value: object, key: str, purpose: str, problems: list[str]) -> list[object]:
     if value is None:
         problems.append(f"no [[{key}]] entries: add at least one to list {purpose}")
@@ -567,6 +694,10 @@ def _display_path(path: Path, base_dir: Path) -> str:
 
 def _quote(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
+
+
+def _describe_text(value: object) -> str:
+    return _quote(value) if isinstance(value, str) else _describe(value)
 
 
 def _describe(value: object) -> str:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from doc_truth.collect import probe_failure
+from doc_truth.collect import probe_failure, redact_result
 from doc_truth.config import Config, ConfigError, Doc, Probe, load_config, resolve_docs
 from doc_truth.evidence import Evidence, ProbeResult
 from doc_truth.findings import Confidence, Finding, FindingsError, parse_findings
@@ -114,7 +114,7 @@ def _evidence(directory: Path, config: Config) -> Evidence:
             raise CaseError(f"{where}: probe must name a probe from doc-truth.toml")
         if name in results:
             raise CaseError(f"{where}: probe {name} already has a result")
-        results[name] = _result(entry, probes[name], where)
+        results[name] = redact_result(_result(entry, probes[name], where), config.redaction)
     missing = [name for name in probes if name not in results]
     if missing:
         raise CaseError(f"evidence.toml: no result for {', '.join(missing)}")

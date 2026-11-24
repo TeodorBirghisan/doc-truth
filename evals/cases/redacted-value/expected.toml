@@ -1,0 +1,11 @@
+[[must-find]]
+id = "keep-daily"
+doc = ["docs/backups.md:13"]
+evidence = ["probe:backup-unit"]
+confidence = "confirmed"
+note = "The doc keeps 14 daily snapshots; the unit sets 7. The unit's line also holds the password, which the evidence hides, so a real contradiction must still be found next to a marker."
+
+[[must-not-find]]
+id = "hidden-password"
+doc = ["docs/backups.md:11-12"]
+note = "The evidence hides the password, so there is nothing to compare it with. A finding that the unit's password differs from the doc's would read the marker as a value."

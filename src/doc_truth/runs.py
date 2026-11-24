@@ -16,6 +16,7 @@ from doc_truth.known import (
     earlier_from_json,
     remembered_from_json,
 )
+from doc_truth.redact import Redactor, redact_identity
 from doc_truth.report import REPORT_FORMAT, Report, report_json, report_markdown
 
 DEFAULT_OUTPUT_DIR_NAME = ".doc-truth"
@@ -25,7 +26,7 @@ EVIDENCE_MARKDOWN = "evidence.md"
 REPORT_JSON = "report.json"
 REPORT_MARKDOWN = "report.md"
 
-_READABLE_REPORT_FORMATS = (2, REPORT_FORMAT)
+_READABLE_REPORT_FORMATS = (2, 3, REPORT_FORMAT)
 _GITIGNORE = "# Created by doc-truth. Run folders can contain sensitive probe output.\n*\n"
 
 
@@ -72,19 +73,34 @@ def latest_report(runs: Path, config: Config) -> PreviousReport | None:
             continue
         if data.get("format") not in _READABLE_REPORT_FORMATS:
             return None
+        redactor = config.redaction
         return PreviousReport(
             run=folder.name,
-            findings=(
-                *(
-                    replace(item, last_run=folder.name)
-                    for item in _earlier_findings(data, path, "findings")
-                ),
-                *_earlier_findings(data, path, "not_rechecked"),
+            findings=tuple(
+                _redacted(item, redactor)
+                for item in (
+                    *(
+                        replace(item, last_run=folder.name)
+                        for item in _earlier_findings(data, path, "findings")
+                    ),
+                    *_earlier_findings(data, path, "not_rechecked"),
+                )
             ),
-            no_longer_reported=_earlier_findings(data, path, "no_longer_reported"),
-            remembered=_remembered(data, path),
+            no_longer_reported=tuple(
+                _redacted(item, redactor)
+                for item in _earlier_findings(data, path, "no_longer_reported")
+            ),
+            remembered=tuple(_redacted(item, redactor) for item in _remembered(data, path)),
         )
     return None
+
+
+def _redacted[Item: (Earlier, Remembered)](item: Item, redactor: Redactor) -> Item:
+    return replace(
+        item,
+        title=redactor.redact(item.title, where="title")[0],
+        identity=redact_identity(item.identity, redactor),
+    )
 
 
 def _read_report(path: Path) -> dict[str, object] | None:

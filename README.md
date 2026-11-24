@@ -99,7 +99,8 @@ your docs (Markdown) ───────────────────�
 1. **Collect.** doc-truth runs the probes from your config file: plain
    read-only shell commands such as `systemctl list-timers` or
    `docker --version`. It records each probe's output, exit code
-   and errors in an evidence file. No model is involved, and the evidence file
+   and errors in an evidence file. Text that looks like a secret is hidden
+   before anything is written. No model is involved, and the evidence file
    is in exactly the form a model sees.
 2. **Check.** It puts the evidence and your docs, with line numbers, into one
    prompt. The model answers with structured findings. It gets no tools, so it
@@ -193,12 +194,15 @@ evidence:
 
 - `report.md` lists the confirmed findings, then the suspect ones, each with
   both quotes and the likely fix.
-  [Known findings](#known-findings), failed probes and dropped findings get
-  sections of their own.
+  [Known findings](#known-findings), failed probes, hidden values and dropped
+  findings get sections of their own.
 - `report.json` has the same report for scripts, with a format version.
 
 Both commands print the run folder's path on standard output. `check` also
-prints a one-line summary on standard error.
+prints a one-line summary on standard error. When either one hides text that
+looked like a secret, it says how many values on standard error, and
+`--show-redactions` lists where they were, never what they were
+([Privacy](#privacy)).
 
 `--output-dir PATH` keeps runs somewhere else, such as a systemd
 `StateDirectory`. The default `.doc-truth` folder gets its own `.gitignore`,
@@ -415,13 +419,30 @@ The evidence and your docs go into the prompt. With a hosted model, they
 leave your machine. Run `doc-truth collect` first and read `evidence.md`: it
 shows what `check` sends, in exactly the form the model sees. `check` runs
 the probes again, so output that changes between runs can differ; the
-`evidence.md` in its own run folder is exactly what it sent. Keep secrets out
-of probe output.
+`evidence.md` in its own run folder is exactly what it sent.
+
+doc-truth hides text in probe output that looks like a secret before it
+writes or sends anything: PEM private keys, common token formats, passwords
+in URLs and `Authorization` headers, and values such as `RESTIC_PASSWORD=…`.
+The [configuration reference](docs/configuration.md#redaction) lists the
+rules and how to add your own. It's a net, not a guarantee: a secret in a
+format no rule knows, or split across lines, gets through, and so do a
+private key printed without its `BEGIN` line, as `tail` prints it, and lines
+from the middle of one. Docs are sent as they are. Keep secrets out of probe output.
+
 Run folders are readable only by the user who ran doc-truth. The
 [known-findings file](#known-findings) is meant to be committed, and holds the
-quotes of the findings you acknowledge. Support for
-local models through OpenAI-compatible endpoints (Ollama, llama.cpp, vLLM) is
-planned for v0.2, along with redaction.
+quotes of the findings you acknowledge. A secret quoted there before
+doc-truth had redaction is still in it: replace it with the marker the
+evidence now shows, such as `[REDACTED:assignment]`. doc-truth reads the file
+through the current rules, so the acknowledgement keeps matching whether you
+replace it or not. In a few cases, such as a finding that quoted a private
+key, it shows as new once and needs `ack` again. A finding that quoted part
+of a key printed without its `BEGIN` line, as `tail` prints it, may never
+settle with `ack`, and `ack` can copy the key's lines into the file: see the
+[configuration reference](docs/configuration.md#earlier-runs-and-known-findings).
+Support for local models through OpenAI-compatible endpoints (Ollama,
+llama.cpp, vLLM) is planned for v0.2.
 
 ## Where it came from
 
@@ -451,12 +472,13 @@ doc-truth is designed around that lesson.
 - **v0.1:** the config format and `validate` (done), `collect` (done),
   `check` with quote verification, Markdown and JSON reports and exit codes
   (done), [probe recipes](docs/probes.md) for systemd, cron, HTTP and tool
-  versions (done), [known findings](#known-findings) and
-  [findings that come back](#findings-that-come-back) (done, ahead of plan). Still
+  versions (done), [known findings](#known-findings),
+  [findings that come back](#findings-that-come-back) and
+  [redaction](#privacy) of secrets in the evidence (done, ahead of plan). Still
   planned: a few weeks on a real server next to the script it replaces, a tested
   timer example, and the first release on PyPI.
-- **v0.2:** local models via OpenAI-compatible endpoints, automatic checks for
-  paths cited in the docs, redaction of secrets in evidence.
+- **v0.2:** local models via OpenAI-compatible endpoints and automatic checks
+  for paths cited in the docs.
 - **v0.3:** a Claude Code plugin with an interactive command for running the
   check and working through its findings.
 

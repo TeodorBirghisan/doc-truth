@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -30,7 +31,9 @@ from doc_truth.config import (
     DOC_KEYS,
     KNOWN_KEYS,
     MODEL_KEYS,
+    PATTERN_KEYS,
     PROBE_KEYS,
+    REDACTION_KEYS,
     TOP_LEVEL_KEYS,
     Config,
     ModelSettings,
@@ -54,6 +57,7 @@ from doc_truth.findings import (
 from doc_truth.known import REMEMBERED_RUNS, Tracked, finding_id
 from doc_truth.model import PROMPT_TOO_LONG, Answer, ModelError, ask_claude
 from doc_truth.prompt import PROMPT_VERSION, Prompt
+from doc_truth.redact import BUILT_IN_NAMES
 from doc_truth.report import Report, report_markdown
 from doc_truth.runs import (
     DEFAULT_OUTPUT_DIR_NAME,
@@ -81,12 +85,14 @@ def test_toml_examples_are_valid_configs(tmp_path: Path, document: str) -> None:
 
 def test_the_reference_documents_every_key() -> None:
     reference = REFERENCE.read_text(encoding="utf-8")
-    tables = {"docs": "`[[docs]]`", "probes": "`[[probes]]`", "model": "`[model]`"}
-    documented = [
-        *tables.values(),
-        "`[[known]]`",
-        *(f"`{key}`" for key in (*DOC_KEYS, *PROBE_KEYS, *MODEL_KEYS, *KNOWN_KEYS)),
-    ]
+    tables = {
+        "docs": "`[[docs]]`",
+        "probes": "`[[probes]]`",
+        "model": "`[model]`",
+        "redaction": "`[redaction]`",
+    }
+    keys = (*DOC_KEYS, *PROBE_KEYS, *MODEL_KEYS, *REDACTION_KEYS, *PATTERN_KEYS, *KNOWN_KEYS)
+    documented = [*tables.values(), "`[[known]]`", *(f"`{key}`" for key in keys)]
 
     assert set(tables) == set(TOP_LEVEL_KEYS)
     assert [form for form in documented if form not in reference] == []
@@ -97,6 +103,20 @@ def test_the_reference_gives_the_model_defaults() -> None:
 
     assert f'| `name` | string | `"{DEFAULT_MODEL}"` |' in reference
     assert f"| `timeout` | number | `{DEFAULT_MODEL_TIMEOUT:g}` |" in reference
+
+
+def test_the_reference_lists_every_built_in_redaction_rule_in_order() -> None:
+    reference = REFERENCE.read_text(encoding="utf-8")
+    section = reference.split("\n### Built-in rules\n", 1)[1].split("\n### ", 1)[0]
+
+    assert re.findall(r"^\| `([^`]+)` \|", section, flags=re.MULTILINE) == list(BUILT_IN_NAMES)
+
+
+def test_the_docs_name_the_redaction_flag_the_cli_has() -> None:
+    for command in ("collect", "check"):
+        assert _parser().parse_args([command, "--show-redactions"]).show_redactions
+    assert "`--show-redactions`" in (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "`--show-redactions`" in REFERENCE.read_text(encoding="utf-8")
 
 
 def flowed(document: Path) -> str:

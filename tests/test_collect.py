@@ -22,6 +22,7 @@ from doc_truth.collect import (
 )
 from doc_truth.config import Probe, load_config
 from doc_truth.evidence import ProbeResult
+from doc_truth.redact import Redaction
 
 SINGLE_PROBE = """
 [[docs]]
@@ -367,3 +368,66 @@ def test_collect_names_a_user_without_a_passwd_entry_by_uid(
     config = load_config(write_config(SINGLE_PROBE))
 
     assert collect(config, tool_version="1").user == str(os.geteuid())
+
+
+REDACTED_PROBES = """
+[[docs]]
+path = "a.md"
+
+[[probes]]
+name = "env"
+command = 'echo "$SECRET_LINE"; echo "$SECRET_HEADER" >&2'
+
+[[probes]]
+name = "url"
+command = ": https://ops:pw-in-command@example.org/"
+
+[[probes]]
+name = "failing"
+command = 'echo "$SECRET_LINE"; exit 1'
+"""
+
+
+@pytest.fixture
+def secrets_in_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SECRET_LINE", "db_password=hunter2-in-output")
+    monkeypatch.setenv("SECRET_HEADER", "Authorization: Bearer hunter2-in-stderr")
+
+
+@pytest.mark.usefixtures("secrets_in_the_environment")
+def test_collect_hides_secrets_before_anything_else_sees_the_result(
+    write_config: Callable[[str], Path],
+) -> None:
+    config = load_config(write_config(REDACTED_PROBES))
+    reported: list[ProbeResult] = []
+
+    evidence = collect(config, tool_version="1", on_result=reported.append)
+
+    assert list(evidence.results) == reported
+    env, url, failing = evidence.results
+    assert (env.stdout, env.stderr) == (
+        "db_password=[REDACTED:assignment]\n",
+        "Authorization: Bearer [REDACTED:authorization]\n",
+    )
+    assert env.redactions == (
+        Redaction(rule="assignment", where="stdout", line=1),
+        Redaction(rule="authorization", where="stderr", line=1),
+    )
+    assert url.probe.command == ": https://ops:[REDACTED:url-password]@example.org/"
+    assert url.redactions == (Redaction(rule="url-password", where="command", line=1),)
+    assert failing.failed
+    assert failing.stdout == "db_password=[REDACTED:assignment]\n"
+    assert config.probes[1].command == ": https://ops:pw-in-command@example.org/"
+
+
+@pytest.mark.usefixtures("secrets_in_the_environment")
+def test_collect_hides_nothing_when_redaction_is_off(
+    write_config: Callable[[str], Path],
+) -> None:
+    config = load_config(write_config(REDACTED_PROBES + "\n[redaction]\nenabled = false\n"))
+
+    env, url, _ = collect(config, tool_version="1").results
+
+    assert env.stdout == "db_password=hunter2-in-output\n"
+    assert url.probe.command == ": https://ops:pw-in-command@example.org/"
+    assert env.redactions == url.redactions == ()
