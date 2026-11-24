@@ -1,4 +1,5 @@
 import re
+import string
 from dataclasses import dataclass, replace
 
 from doc_truth.findings import Identity, ProbeOutput
@@ -33,7 +34,7 @@ _NOT_A_URL_PASSWORD = re.compile(
 )
 _MARKER = re.compile(r"\[REDACTED:[a-z0-9-]+\]")
 _KEY_EDGE = re.compile(r"-----(?:BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----")
-_KEY_BODY = re.compile(r"[A-Za-z0-9+/=]+")
+_KEY_CHARACTERS = frozenset(string.ascii_letters + string.digits + "+/=")
 _KEY_LEFTOVER = re.compile(r"[A-Za-z0-9+/=]+|-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----")
 _KEY_TAIL = "key_tail"
 _KEY_LINE_WIDTH = 40
@@ -77,7 +78,7 @@ BUILT_IN_RULES = (
         "private-key",
         r"(?s)-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----"
         r".*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|\Z)"
-        rf"|(?<![^\r\n\]])(?P<{_KEY_TAIL}>-----END [A-Z0-9 ]{{0,40}}PRIVATE KEY-----)",
+        rf"|(?<![^\r\n])(?P<{_KEY_TAIL}>-----END [A-Z0-9 ]{{0,40}}PRIVATE KEY-----)",
         spans_lines=True,
     ),
     _rule(
@@ -169,20 +170,21 @@ class Redactor:
         group = SECRET_GROUP if SECRET_GROUP in rule.pattern.groupindex else 0
         spans = []
         for segment_start, segment_end in segments:
-            for match in rule.pattern.finditer(text, segment_start, segment_end):
+            # Matched as a string of its own, a segment starts a line after a marker, and no
+            # lookbehind sees the marker's closing bracket.
+            segment = text[segment_start:segment_end]
+            for match in rule.pattern.finditer(segment):
                 start, end = match.span(group)
                 if rule.spans_lines and match[_KEY_TAIL] is not None:
-                    if start > segment_start and text[start - 1] not in "\r\n":
-                        continue
-                    start = _start_of_key_body(text, segment_start, start)
-                secret = text[start:end]
+                    start = _start_of_key_body(segment, start)
+                secret = segment[start:end]
                 if (
                     start == end
                     or (rule.placeholders is not None and rule.placeholders.fullmatch(secret))
                     or self._allowed(secret)
                 ):
                     continue
-                spans.append((start, end))
+                spans.append((segment_start + start, segment_start + end))
         return spans
 
     def _allowed(self, secret: str) -> bool:
@@ -190,27 +192,22 @@ class Redactor:
         return any(allowed.fullmatch(secret) or allowed.fullmatch(bare) for allowed in self.allow)
 
 
-def _start_of_key_body(text: str, floor: int, start: int) -> int:
-    # Walking back from the END line, and searching for each kind of line break again only
-    # once the walk has passed the last one found, keeps this linear; a pattern for the lines
-    # above it would retry from every line of a long run of base64-shaped lines, such as a list
-    # of hashes. Only the last line of a body is short, so a short line above it, such as a
-    # one-word message, is not part of the key.
+def _start_of_key_body(text: str, start: int) -> int:
+    # Stepping back over key characters, instead of matching the lines above with a pattern or
+    # searching for line breaks, visits each character once, even in a long run of
+    # base64-shaped lines such as a list of hashes. Only the last line of a body is short, so a
+    # short line above it, such as a one-word message, is not part of the key.
     width = None
     last_line = True
-    newline = carriage_return = len(text)
-    while start > floor:
+    while start > 0:
         line_end = start - 1
-        if text[line_end] == "\n" and line_end > floor and text[line_end - 1] == "\r":
+        if text[line_end] == "\n" and line_end > 0 and text[line_end - 1] == "\r":
             line_end -= 1
-        if newline >= line_end:
-            newline = text.rfind("\n", floor, line_end)
-        if carriage_return >= line_end:
-            carriage_return = text.rfind("\r", floor, line_end)
-        found = max(newline, carriage_return)
-        line_start = found + 1 if found >= 0 else floor
+        line_start = line_end
+        while line_start > 0 and text[line_start - 1] in _KEY_CHARACTERS:
+            line_start -= 1
         length = line_end - line_start
-        if not _KEY_BODY.fullmatch(text, line_start, line_end):
+        if length == 0 or (line_start > 0 and text[line_start - 1] not in "\r\n"):
             break
         if not last_line:
             if width is None and length >= _KEY_LINE_WIDTH:

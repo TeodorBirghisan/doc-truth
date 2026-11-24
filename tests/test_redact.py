@@ -413,6 +413,11 @@ def test_a_private_key_is_hidden_whole_even_when_the_output_was_cut_off() -> Non
         (END, "[REDACTED:private-key]"),
         (f"{END}\n{END}", "[REDACTED:private-key]\n[REDACTED:private-key]"),
         (f"[REDACTED:x]{END}", "[REDACTED:x][REDACTED:private-key]"),
+        (f"[REDACTED:x]{KEY_TAIL}{END}", "[REDACTED:x][REDACTED:private-key]"),
+        (f"word QUJD\n{END}", "word QUJD\n[REDACTED:private-key]"),
+        (f"QUJD\n\n{END}", "QUJD\n\n[REDACTED:private-key]"),
+        (f"{'Q' * 64}\n\n{END}", f"{'Q' * 64}\n\n[REDACTED:private-key]"),
+        (f"{'Q' * 64}\nQQ==\n{END}", "[REDACTED:private-key]"),
         (f"{'Q' * 1600}\n{END}", "[REDACTED:private-key]"),
         (f"{'Q' * 64}\n{'Q' * 120}\n{'Q' * 20}\n{END}", f"{'Q' * 64}\n[REDACTED:private-key]"),
         (f"x{END}", f"x{END}"),
@@ -423,10 +428,13 @@ def test_the_end_of_a_key_is_hidden_with_the_body_lines_above_it(text: str, expe
     assert hidden(text) == expected
 
 
-def test_an_end_line_inside_other_text_leaves_a_key_that_shares_its_dashes() -> None:
-    text = f"x-----END RSA PRIVATE KEY-----BEGIN RSA PRIVATE KEY-----\n{KEY_TAIL}"
+@pytest.mark.parametrize(
+    "before", ["x", "x]", "[a]", "[REDACTED:a]x"], ids=["text", "bracket", "brackets", "marker"]
+)
+def test_an_end_line_inside_other_text_leaves_a_key_that_shares_its_dashes(before: str) -> None:
+    text = f"{before}-----END RSA PRIVATE KEY-----BEGIN RSA PRIVATE KEY-----\n{KEY_TAIL}"
 
-    assert hidden(text) == "x-----END RSA PRIVATE KEY[REDACTED:private-key]"
+    assert hidden(text) == f"{before}-----END RSA PRIVATE KEY[REDACTED:private-key]"
 
 
 def test_an_end_line_inside_other_text_is_not_a_key() -> None:
@@ -628,6 +636,8 @@ MEBIBYTE = 1024 * 1024
         "-----END " + "A" * MEBIBYTE,
         ("QUJD" * 16 + "\n") * (MEBIBYTE // 65) + END,
         ("QUJD" * 16 + "\r") * (MEBIBYTE // 65) + END,
+        ("Q\n" + END + "\n") * (MEBIBYTE // 30),
+        ("Q\r" + END + "\r") * (MEBIBYTE // 30),
     ],
     ids=lambda text: repr(text[:24]),
 )
