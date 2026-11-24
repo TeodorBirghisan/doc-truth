@@ -176,7 +176,7 @@ each key.
 
 | Rule | Hides |
 |---|---|
-| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. In fresh output, a key printed without its `BEGIN` line, as `tail` prints it, isn't recognised: its body and `END` line stay visible, and so do lines from the middle of a key. A stored finding that quoted the `END` line is read differently: see [Earlier runs and known findings](#earlier-runs-and-known-findings). |
+| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. In fresh output, a key printed without its `BEGIN` line, as `tail` prints it, isn't recognised: its body and `END` line stay visible, and so do lines from the middle of a key. A stored finding that quoted a key's `BEGIN` or `END` line is read differently: see [Earlier runs and known findings](#earlier-runs-and-known-findings). |
 | `github-token` | GitHub tokens: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` and `github_pat_`. |
 | `gitlab-token` | GitLab personal access tokens, `glpat-`. |
 | `slack-token` | Slack tokens, `xoxb-` and the other `xox` kinds. |
@@ -264,13 +264,15 @@ line such as `active` goes with them, so such a finding may show as new once,
 and an acknowledgement of it needs `ack` again. A finding left with no line
 keeps the marker.
 
-A finding whose quoted lines all come from the end of a key, as `tail` prints
-it, keeps only the marker the same way, while fresh output shows the lines.
-So it can't be acknowledged: `ack` records the marker, the next `check` says
-that what the acknowledgement rests on has changed, and a second `ack` is
-refused as already acknowledged. As an omission it also shows as new on every
-run. If the finding also quoted a line that isn't shaped like part of a key,
-such as `mode: 600`, that line is kept and the acknowledgement matches.
+Part of a key printed without its `BEGIN` line, as `tail` prints it, stays
+visible in fresh output, so a finding can quote it, and such a finding isn't
+tracked reliably. If it quoted the key's `END` line and nothing else is left
+once the key's lines are dropped, it's read back as only the marker, which
+never matches the fresh lines: `ack` records the marker but doesn't settle the
+finding, and an omission shows as new on every run and also appears under No
+longer reported. If it quoted only body lines, they're kept as they are, so
+`ack` works and writes them into the known-findings file. Keep keys out of
+probe output.
 
 ### What it shows
 
