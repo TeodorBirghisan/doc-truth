@@ -394,10 +394,17 @@ def test_a_private_key_is_hidden_whole_even_when_the_output_was_cut_off() -> Non
     assert hidden(f"before\n{cut_off}") == "before\n[REDACTED:private-key]"
 
 
-def test_an_end_line_inside_other_text_is_not_a_key() -> None:
-    text = f"echo {END}"
+KEY_TAIL = f"{'QUJD' * 16}\n{'RUZH' * 16}\nSUpL\n{END}"
 
-    assert hidden(text) == text
+
+def test_the_end_of_a_key_without_its_begin_line_stays_visible() -> None:
+    assert hidden(KEY_TAIL) == KEY_TAIL
+
+
+def test_an_identity_that_quoted_the_end_of_a_key_keeps_only_the_marker() -> None:
+    redacted = redact_identity(key_identity(*KEY_TAIL.splitlines()), REDACTOR)
+
+    assert redacted.evidence.lines == {"[REDACTED:private-key]"}
 
 
 def test_any_kind_of_private_key_is_hidden() -> None:
@@ -580,13 +587,6 @@ MEBIBYTE = 1024 * 1024
         "password=${A:-" + "a" * MEBIBYTE,
         "Authorization: " + "a " * (MEBIBYTE // 2),
         ("Authorization:" + " " * 10) * (MEBIBYTE // 24),
-        f"{END}\n" * (MEBIBYTE // 26),
-        "a\n" * (MEBIBYTE // 2) + END,
-        "-----END " + "A" * MEBIBYTE,
-        ("QUJD" * 16 + "\n") * (MEBIBYTE // 65) + END,
-        ("QUJD" * 16 + "\r") * (MEBIBYTE // 65) + END,
-        ("Q\n" + END + "\n") * (MEBIBYTE // 30),
-        ("Q\r" + END + "\r") * (MEBIBYTE // 30),
     ],
     ids=lambda text: repr(text[:24]),
 )

@@ -426,8 +426,9 @@ writes or sends anything: PEM private keys, common token formats, passwords
 in URLs and `Authorization` headers, and values such as `RESTIC_PASSWORD=…`.
 The [configuration reference](docs/configuration.md#redaction) lists the
 rules and how to add your own. It's a net, not a guarantee: a secret in a
-format no rule knows, or split across lines, gets through, and docs are sent
-as they are. Keep secrets out of probe output.
+format no rule knows, or split across lines, gets through, and so does the end
+of a private key printed without its `BEGIN` line, as `tail` prints it. Docs
+are sent as they are. Keep secrets out of probe output.
 
 Run folders are readable only by the user who ran doc-truth. The
 [known-findings file](#known-findings) is meant to be committed, and holds the
@@ -436,7 +437,9 @@ doc-truth had redaction is still in it: replace it with the marker the
 evidence now shows, such as `[REDACTED:assignment]`. doc-truth reads the file
 through the current rules, so the acknowledgement keeps matching whether you
 replace it or not. In a few cases, such as a finding that quoted a private
-key, it shows as new once and needs `ack` again: see the
+key, it shows as new once and needs `ack` again. A finding that quoted the end
+of a key, as `tail` prints it, shows as new on every run, and each `ack`
+copies the key's lines into the file: see the
 [configuration reference](docs/configuration.md#earlier-runs-and-known-findings).
 Support for local models through OpenAI-compatible endpoints (Ollama,
 llama.cpp, vLLM) is planned for v0.2.

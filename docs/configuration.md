@@ -176,7 +176,7 @@ each key.
 
 | Rule | Hides |
 |---|---|
-| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. Output that starts inside a key, as `tail` prints it, isn't recognised: its body and `END` line stay visible, and so do lines from the middle of a key. |
+| `private-key` | A PEM private key block, from its `BEGIN` line to its `END` line, or to the end of the output when no `END` line follows, as when the output was cut off. In fresh output, a key printed without its `BEGIN` line, as `tail` prints it, isn't recognised: its body and `END` line stay visible, and so do lines from the middle of a key. A stored finding is read differently, see [Earlier runs and known findings](#earlier-runs-and-known-findings). |
 | `github-token` | GitHub tokens: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` and `github_pat_`. |
 | `gitlab-token` | GitLab personal access tokens, `glpat-`. |
 | `slack-token` | Slack tokens, `xoxb-` and the other `xox` kinds. |
@@ -262,7 +262,10 @@ every stored line shaped like the rest of a key (only letters, digits, `+`,
 `/` and `=`), because its lines are stored without their order. A one-word
 line such as `active` goes with them, so such a finding may show as new once,
 and an acknowledgement of it needs `ack` again. A finding left with no line
-keeps the marker.
+keeps the marker. A finding that quoted the end of a key, as `tail` prints it,
+has its lines dropped the same way through its `END` line, while fresh output
+keeps them visible, so it shows as new on every run and `ack` doesn't settle
+it.
 
 ### What it shows
 
